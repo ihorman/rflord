@@ -558,7 +558,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, "   Freq    Pwr   Std   Dist Type               Last Seen"[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, "   Freq    Pwr   Std   Dist Type               Last Seen Remark"[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
@@ -994,7 +994,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D}   Freq    Pwr   Std   Dist Type               Last Seen {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
+        print(f"{D}   Freq    Pwr   Std   Dist Type               Last Seen Remark {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
