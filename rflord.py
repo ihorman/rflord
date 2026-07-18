@@ -525,8 +525,10 @@ def draw_splash(stdscr, device, status_lines=None):
     
     stdscr.refresh()
 
-def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
+def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
+    if known_freqs is None:
+        known_freqs = {}
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
@@ -607,10 +609,11 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             remark_w = max(12, mid - 55)
             remark = remark[:remark_w]
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
-            seen_time = known_freqs.get(round(f), time.time())
+            seen_time = last_seen.get(round(f), time.time())
             ago = time_ago(seen_time)
-            # Fresh detection blink: signal seen < 30s ago, toggle every 1s
-            age = time.time() - seen_time
+            # Fresh detection blink: first seen < 30s ago
+            first_time = known_freqs.get(round(f), time.time())
+            age = time.time() - first_time
             is_fresh = age < 30
             blink_on = is_fresh and int(time.time() * 2) % 2 == 0  # 0.5s on, 0.5s off
             line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}"
@@ -707,7 +710,8 @@ def main_curses(stdscr, device):
     ]
     
     scan_num = 0
-    known_freqs = {}
+    known_freqs = {}   # freq -> first seen time (for new signal detection)
+    last_seen = {}     # freq -> last seen time (for "Last Seen" display)
     alert_count = 0
     start_time = time.time()
     
@@ -738,12 +742,6 @@ def main_curses(stdscr, device):
                 seen[key] = s
         unique = list(seen.values())
         
-        # Update "last seen" timestamp for ALL signals in this scan
-        now = time.time()
-        for s in unique:
-            key = round(s['freq'] / 1e6)
-            known_freqs[key] = now  # Update every scan
-        
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
         probes = detect_active_probes(unique, noise_floor)
@@ -765,7 +763,13 @@ def main_curses(stdscr, device):
                     log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f" % (f, s["peak"], s["std"]))
                     alert_count += 1
         
-        draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
+        # Update "last seen" for ALL signals
+        now = time.time()
+        for s in unique:
+            key = round(s['freq'] / 1e6)
+            last_seen[key] = now  # Update every scan
+        
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
         
         if scan_num % 10 == 0:
             cleanup_old_decoded()
@@ -828,7 +832,7 @@ def main_curses(stdscr, device):
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
         # Refresh table after voice (speak() blocks and curses screen goes stale)
-        draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
         
         # Wait with key handling
         stdscr.nodelay(True)
@@ -848,7 +852,7 @@ def main_curses(stdscr, device):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
                 speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             # Redraw table every 500ms for blink effect
-            draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
+            draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
