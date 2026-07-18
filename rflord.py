@@ -795,7 +795,9 @@ def main_curses(stdscr, device):
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                     if artemis_entry:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {speak_distance(dist)}")
+                        # Use description first (matches table), fall back to name
+                        name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                        announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
@@ -1108,7 +1110,9 @@ def main_ansi():
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                     if artemis_entry:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {speak_distance(dist)}")
+                        # Use description first (matches table), fall back to name
+                        name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                        announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
