@@ -565,6 +565,7 @@ def main_curses(stdscr):
 
     while True:
         scan_num += 1
+        log.info(f"=== Scan #{scan_num} started ===")
         
         
         all_signals = []
@@ -707,6 +708,7 @@ def main_ansi():
     
     while True:
         scan_num += 1
+        log.info(f"=== Scan #{scan_num} started ===")
         
         
         all_signals = []
@@ -721,6 +723,8 @@ def main_ansi():
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
+        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"])
+        log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
         suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
                             key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
         ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) != "sus"],
