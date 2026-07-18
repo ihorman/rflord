@@ -811,6 +811,9 @@ def main_curses(stdscr, device):
                 dist = est_distance(f0, s0['peak'])
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
+        # Refresh table after voice (speak() blocks and curses screen goes stale)
+        draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
+        
         # Wait with key handling
         stdscr.nodelay(True)
         stdscr.timeout(1000)
@@ -828,6 +831,7 @@ def main_curses(stdscr, device):
             elif key == ord('v') or key == ord('V'):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
                 speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
+                draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
