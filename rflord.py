@@ -253,7 +253,7 @@ def speak(text):
     try:
         raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
         out = tempfile.mktemp(suffix='.wav', prefix='hal_')
-        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", "-15%",
+        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
                         "--text", text, "--write-media", raw],
                        capture_output=True, timeout=60)
         if os.path.exists(raw):
@@ -537,6 +537,7 @@ def draw_splash(stdscr, device, status_lines=None):
         except:
             pass
     
+    stdscr.clrtobot()
     stdscr.refresh()
 
 def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None):
