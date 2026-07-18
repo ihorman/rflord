@@ -722,6 +722,8 @@ def main_curses(stdscr, device):
     global INTERVAL, VOICE_THRESHOLD
     
     # Setup curses
+    curses.cbreak()
+    curses.noecho()
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
