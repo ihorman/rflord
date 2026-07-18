@@ -40,6 +40,7 @@ CP_OK = 4
 CP_DIM = 5
 CP_SEP = 6
 CP_FRESH = 7
+CP_DANGER = 8
 
 def run_cmd(cmd, timeout=60):
     try:
@@ -154,16 +155,18 @@ def classify(f, power, std):
         return "ok"
     if 2300 <= f <= 2700:
         return "ok"
+    
+    # DVB-T2 band (470-790 MHz): narrowband = DANGER (possible camera)
+    if 470 <= f <= 790 and std < 2:
+        return "danger"
+    # Wideband DVB-T2 is ok
+    if 470 <= f <= 790 and std > 3:
+        return "ok"
+    
     if 400 <= f <= 510:
         return "ok"
     if 510 <= f <= 610:
         return "ok"
-    # DVB-T2 broadcast (Ukraine/EU: 470-790 MHz, wideband OFDM, std > 3)
-    # Narrowband signals in this band (std < 2) are NOT DVB-T2 — could be hidden cameras
-    if 470 <= f <= 790 and std > 3:
-        return "ok"
-    if 470 <= f <= 790 and std < 2:
-        return "sus"  # Narrowband in TV band = suspicious (possible camera)
     
     # SUSPICIOUS — military, spy, FPV, unknown transmitters
     if 255 <= f <= 267:  # Link-11 UHF, Gonets
@@ -171,8 +174,6 @@ def classify(f, power, std):
     if 270 <= f <= 285:  # Link-11 UHF
         return "sus"
     if 243 <= f <= 244:  # Milstar
-        return "sus"
-
         return "sus"
     if 140 <= f <= 150:  # Military CW
         return "sus"
@@ -559,11 +560,11 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         known_freqs = {}
     h, w = stdscr.getmaxyx()
     
-    suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
+    suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                         key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
 
 
-    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) != 'sus'],
+    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger')],
                 key=lambda x: x['peak'], reverse=True)
     
     elapsed = int(time.time() - start_time)
@@ -635,14 +636,20 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(18)+sp+ago(5)+sp = 53 visible cells
             remark_w = max(12, mid - 55)
             remark = remark[:remark_w]
-            # Red if within 1000m, yellow otherwise
+            # Red if within 1000m, yellow otherwise; danger signals get special color
             dist_m = s['peak']  # we'll calculate actual meters
             try:
                 d_val = float(dist.rstrip('mk'))
                 d_m = d_val * 1000 if dist.endswith('km') else d_val
             except:
                 d_m = 9999
-            cp = CP_SUS_RED if d_m < 1000 else CP_SUS_YEL
+            cls = classify(f, s['peak'], s['std'])
+            if cls == "danger":
+                cp = CP_DANGER  # Red on yellow for DVB-T2 band narrowband
+            elif d_m < 1000:
+                cp = CP_SUS_RED
+            else:
+                cp = CP_SUS_YEL
             seen_time = last_seen.get(round(f), time.time())
             ago = time_ago(seen_time)
             # Fresh detection blink: first seen < 30s ago
@@ -711,6 +718,7 @@ def main_curses(stdscr, device):
     curses.init_pair(CP_DIM, curses.COLOR_WHITE, -1)
     curses.init_pair(CP_SEP, curses.COLOR_WHITE, -1)
     curses.init_pair(CP_FRESH, curses.COLOR_WHITE, -1)  # Blink effect for fresh detections
+    curses.init_pair(CP_DANGER, curses.COLOR_RED, curses.COLOR_YELLOW)  # Danger: red on yellow
     
     stdscr.nodelay(False)
     stdscr.timeout(-1)
@@ -791,7 +799,7 @@ def main_curses(stdscr, device):
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
-            if classify(f, s['peak'], s['std']) == "sus":
+            if classify(f, s['peak'], s['std']) in ("sus", "danger"):
                 if round(f) not in known_freqs:
                     known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
@@ -895,7 +903,7 @@ def main_curses(stdscr, device):
             elif key == ord('r') or key == ord('R'):
                 break
             elif key == ord('v') or key == ord('V'):
-                sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
+                sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             # Redraw table every 500ms for blink effect
             draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
@@ -1007,6 +1015,7 @@ def main_ansi():
     
     # ANSI colors
     R = "\033[1;31m"; Y = "\033[1;33m"; G = "\033[1;32m"; C = "\033[1;36m"; D = "\033[2m"; N = "\033[0m"; W = "\033[1;37m"
+    DR = "\033[1;31;43m"  # Danger: red on yellow background
     
     signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h\033[H\033[J"), print(f"\n{C}Stopped.{N}"), sys.exit(0)))
     print("\033[2J\033[H\033[?25l", end="")
@@ -1033,11 +1042,11 @@ def main_ansi():
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
-        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"])
+        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
-        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
+        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                             key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
-        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) != "sus"],
+        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger")],
                     key=lambda x: x["peak"], reverse=True)
 
 
@@ -1045,7 +1054,7 @@ def main_ansi():
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
-            if classify(f, s['peak'], s['std']) == "sus":
+            if classify(f, s['peak'], s['std']) in ("sus", "danger"):
                 if round(f) not in known_freqs:
                     known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
@@ -1107,6 +1116,9 @@ def main_ansi():
                 blink_on = is_fresh and int(time.time() * 2) % 2 == 0
                 if is_fresh:
                     c = R if blink_on else Y  # Red/Yellow blink
+                # Danger signals (narrowband in DVB-T2 band)
+                if classify(f, s['peak'], s['std']) == "danger":
+                    c = DR  # Red on yellow background
                 left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
             
             if i < len(ok):
