@@ -738,6 +738,12 @@ def main_curses(stdscr, device):
                 seen[key] = s
         unique = list(seen.values())
         
+        # Update "last seen" timestamp for ALL signals in this scan
+        now = time.time()
+        for s in unique:
+            key = round(s['freq'] / 1e6)
+            known_freqs[key] = now  # Update every scan
+        
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
         probes = detect_active_probes(unique, noise_floor)
