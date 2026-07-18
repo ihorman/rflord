@@ -170,13 +170,14 @@ def est_distance(freq_mhz, power_dbfs):
         return f"{d:.0f}km"
 
 def speak(text):
+    """Speak text via edge-tts. No timeout — let it play fully."""
     try:
         wav = tempfile.mktemp(suffix='.mp3', prefix='tts_')
         subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", "+10%",
                         "--text", text, "--write-media", wav],
-                       capture_output=True, timeout=10)
+                       capture_output=True, timeout=60)
         if os.path.exists(wav):
-            subprocess.run(["paplay", wav], capture_output=True, timeout=15)
+            subprocess.run(["paplay", wav], capture_output=True, timeout=120)
             os.unlink(wav)
     except:
         pass
