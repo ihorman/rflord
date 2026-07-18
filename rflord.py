@@ -488,12 +488,17 @@ def draw_splash(stdscr, device, status_lines=None):
     
     lines = [
         "",
-        "RFLORD",
+        "  ██████╗  ███████╗██╗      ██████╗ ██████╗ ██████╗ ",
+        "  ██╔══██╗██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗",
+        "  ██████╔╝█████╗  ██║     ██║   ██║██████╔╝██║  ██║",
+        "  ██╔══██╗██╔══╝  ██║     ██║   ██║██╔══██╗██║  ██║",
+        "  ██║  ██║███████╗███████╗╚██████╔╝██║  ██║██████╔╝",
+        "  ╚═╝  ╚═╝╚══════╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ",
         "",
-        f"RF Spectrum Monitor  {VERSION}",
-        f"Author: Ihor Kolodyuk",
+        f"  RF SPECTRUM MONITOR  {VERSION}",
+        f"  Author: Ihor Kolodyuk",
         "",
-        f"Device: {device.upper() if device else 'NOT FOUND'}",
+        f"  Device: {device.upper() if device else 'NOT FOUND'}",
     ]
     
     if status_lines:
@@ -510,7 +515,7 @@ def draw_splash(stdscr, device, status_lines=None):
         if row >= h - 1:
             break
         try:
-            if line == "RFLORD":
+            if "████" in line:
                 color = CP_SUS_RED
                 stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
             elif ": OK" in line:
@@ -521,10 +526,10 @@ def draw_splash(stdscr, device, status_lines=None):
                 color = CP_SUS_RED
                 col = max(0, (w - len(line)) // 2)
                 stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
-            elif "Monitor" in line:
+            elif "SPECTRUM" in line:
                 color = CP_HEADER
                 col = max(0, (w - len(line)) // 2)
-                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
             else:
                 color = CP_DIM
                 col = max(0, (w - len(line)) // 2)
