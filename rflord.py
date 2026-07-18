@@ -246,8 +246,15 @@ def identify_signal(freq_mhz, artemis_db):
         return best['name']
     return None
 
-def get_signal_type(freq_mhz, bw, pmr, std):
-    # Known real signals FIRST (before Display Port range)
+def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
+    """Classify signal type. Check Artemis first, then hardcoded rules."""
+    # Check Artemis database FIRST
+    if artemis_db:
+        art_name = identify_signal(freq_mhz, artemis_db)
+        if art_name:
+            return art_name[:13]
+    
+    # Known real signals
     if 240 <= freq_mhz <= 242: return "DAB"
     elif 235 <= freq_mhz <= 238: return "DAB+"
     elif 390 <= freq_mhz <= 400: return "TETRA"
@@ -258,7 +265,6 @@ def get_signal_type(freq_mhz, bw, pmr, std):
         return "Mil/Enc"
     elif 300 <= freq_mhz <= 330:
         return "Mil/Enc"
-    # Real signals in Display Port range (230-285 MHz)
     elif 225 <= freq_mhz <= 400 and std > 3:
         return "Link-11"
     elif 243 <= freq_mhz <= 244:
@@ -267,7 +273,6 @@ def get_signal_type(freq_mhz, bw, pmr, std):
         return "Gonets"
     elif 174 <= freq_mhz <= 230:
         return "DAB+"
-    # Display Port range (230-285 MHz) — only if NOT a known signal
     elif 230 <= freq_mhz <= 285:
         return "Display Port"
     elif 612 <= freq_mhz <= 700:
@@ -355,7 +360,7 @@ def play_voice_sample(freq_mhz):
             w.setsampwidth(2)
             w.setframerate(target_rate)
             w.writeframes(audio_16.tobytes())
-        sig_type = get_signal_type(freq_mhz, 0, 0, 0)
+        sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
         save_decoded_audio(freq_mhz, wav, sig_type)
         ensure_sink()
         subprocess.run(["paplay", wav], capture_output=True, timeout=10)
@@ -438,11 +443,11 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             s = suspicious[i]
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
-            sig_type = get_signal_type(f, 0, 0, s['std'])
+            sig_type = get_signal_type(f, 0, 0, s["std"], artemis_db)
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}"
             try:
-                stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp))
+                stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
         
         # Right — known
@@ -563,7 +568,7 @@ def main_curses(stdscr):
                 for s in above_threshold[:4]:
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
-                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_name = identify_signal(f, artemis_db)
                     if artemis_name:
                         announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
@@ -578,7 +583,7 @@ def main_curses(stdscr):
                 
                 for s in above_threshold:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     if sig_type == "Analog" and s['std'] < 4:
                         play_voice_sample(f)
                         if not voice_result:
@@ -718,7 +723,7 @@ def main_ansi():
                 s = suspicious[i]
                 f = s['freq'] / 1e6
                 dist = est_distance(f, s['peak'])
-                sig_type = get_signal_type(f, 0, 0, s['std'])
+                sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                 c = R if i < 3 else Y
                 left = f"{c}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}{N}"
             
@@ -756,7 +761,7 @@ def main_ansi():
                 for s in above_threshold[:4]:
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
-                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_name = identify_signal(f, artemis_db)
                     if artemis_name:
                         announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
@@ -769,7 +774,7 @@ def main_ansi():
                         break
                 for s in above_threshold:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     if sig_type == "Analog" and s['std'] < 4:
                         play_voice_sample(f)
                         if not voice_result:
