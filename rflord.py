@@ -616,7 +616,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}"
             try:
                 if is_fresh:
-                    attr = curses.color_pair(CP_FRESH) | (curses.A_BOLD if blink_on else curses.A_DIM)
+                    attr = curses.color_pair(CP_SUS_RED if blink_on else CP_SUS_YEL) | curses.A_BOLD
                 else:
                     attr = curses.color_pair(cp) | curses.A_BOLD
                 stdscr.addstr(row, 0, line[:mid-1], attr)
@@ -1050,7 +1050,7 @@ def main_ansi():
                 is_fresh = age < 30
                 blink_on = is_fresh and int(time.time() * 2) % 2 == 0
                 if is_fresh:
-                    c = W if blink_on else D  # White blink or dim
+                    c = R if blink_on else Y  # Red/Yellow blink
                 left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
             
             if i < len(ok):
