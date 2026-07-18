@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.54"
+VERSION = "v0.5.55"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -93,11 +93,9 @@ def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
     return run_cmd(cmd, timeout=45)
 
 def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
-    """RTL-SDR sweep using rtl_power. f_lo/f_hi in Hz."""
-    f_lo_mhz = f_lo / 1e6
-    f_hi_mhz = f_hi / 1e6
+    """RTL-SDR sweep using rtl_power. f_lo/f_hi in MHz (same as hackrf_sweep)."""
     # Use 2.4MHz bin width (close to hackrf_sweep default)
-    cmd = f"/usr/local/bin/rtl_power -f {f_lo_mhz}M:{f_hi_mhz}M:2.4M -g {gain} -e {n*5}s 2>/dev/null | grep '^[0-9]'"
+    cmd = f"/usr/local/bin/rtl_power -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e {n*5}s 2>/dev/null | grep '^[0-9]'"
     return run_cmd(cmd, timeout=60)
 
 def parse_sweep(output):
