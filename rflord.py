@@ -158,6 +158,12 @@ def classify(f, power, std):
         return "ok"
     if 510 <= f <= 610:
         return "ok"
+    # DVB-T2 broadcast (Ukraine/EU: 470-790 MHz, wideband OFDM, std > 3)
+    # Narrowband signals in this band (std < 2) are NOT DVB-T2 — could be hidden cameras
+    if 470 <= f <= 790 and std > 3:
+        return "ok"
+    if 470 <= f <= 790 and std < 2:
+        return "sus"  # Narrowband in TV band = suspicious (possible camera)
     
     # SUSPICIOUS — military, spy, FPV, unknown transmitters
     if 255 <= f <= 267:  # Link-11 UHF, Gonets
@@ -348,6 +354,13 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
         return "DAB+"
     elif 230 <= freq_mhz <= 285:
         return "Display Port"
+    elif 470 <= freq_mhz <= 790:
+        if std > 3:
+            return "DVB-T2"
+        elif std < 2:
+            return "CAM-DTV?"  # Narrowband in TV band = possible camera
+        else:
+            return "DVB-T2"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
         else: return "USB-burst"
