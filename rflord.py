@@ -608,7 +608,14 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(18)+sp+ago(5)+sp = 53 visible cells
             remark_w = max(12, mid - 55)
             remark = remark[:remark_w]
-            cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
+            # Red if within 1000m, yellow otherwise
+            dist_m = s['peak']  # we'll calculate actual meters
+            try:
+                d_val = float(dist.rstrip('mk'))
+                d_m = d_val * 1000 if dist.endswith('km') else d_val
+            except:
+                d_m = 9999
+            cp = CP_SUS_RED if d_m < 1000 else CP_SUS_YEL
             seen_time = last_seen.get(round(f), time.time())
             ago = time_ago(seen_time)
             # Fresh detection blink: first seen < 30s ago
