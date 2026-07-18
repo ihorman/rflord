@@ -445,7 +445,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type         "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type          Ago Remark"[:mid-1], curses.color_pair(CP_DIM))
         stdscr.addstr(row, mid, " Freq    Pwr   Std  Dist Bnd  Identification    "[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
@@ -479,7 +479,9 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
                 art = identify_signal(f, artemis_db) if artemis_db else None
                 remark = art[:18] if art else ""
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
-            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {remark}"
+            seen_time = known_freqs.get(round(f), time.time())
+            ago = time_ago(seen_time)
+            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {ago:>4} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -554,7 +556,7 @@ def main_curses(stdscr):
     ]
     
     scan_num = 0
-    known_freqs = set()
+    known_freqs = {}
     alert_count = 0
     start_time = time.time()
     
@@ -586,7 +588,7 @@ def main_curses(stdscr):
             f = s['freq'] / 1e6
             if classify(f, s['peak'], s['std']) == "sus":
                 if round(f) not in known_freqs:
-                    known_freqs.add(round(f))
+                    known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
                     log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f" % (f, s["peak"], s["std"]))
                     alert_count += 1
@@ -691,7 +693,7 @@ def main_ansi():
     ]
     
     scan_num = 0
-    known_freqs = set()
+    known_freqs = {}
     alert_count = 0
     start_time = time.time()
     
@@ -737,7 +739,7 @@ def main_ansi():
             f = s['freq'] / 1e6
             if classify(f, s['peak'], s['std']) == "sus":
                 if round(f) not in known_freqs:
-                    known_freqs.add(round(f))
+                    known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
                     alert_count += 1
         
@@ -782,7 +784,9 @@ def main_ansi():
                     art = identify_signal(f, artemis_db) if artemis_db else None
                     remark = art[:18] if art else ""
                 c = R if i < 3 else Y
-                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {remark}{N}"
+                seen_time = known_freqs.get(round(f), time.time())
+                ago = time_ago(seen_time)
+                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {ago:>4} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
@@ -904,3 +908,15 @@ def cleanup_old_logs():
 
 # Initialize logger
 log = setup_logger()
+
+def time_ago(timestamp):
+    """Format timestamp as human-readable time ago."""
+    diff = time.time() - timestamp
+    if diff < 60:
+        return f"{int(diff)}s"
+    elif diff < 3600:
+        return f"{int(diff/60)}m"
+    elif diff < 86400:
+        return f"{int(diff/3600)}h"
+    else:
+        return f"{int(diff/86400)}d"
