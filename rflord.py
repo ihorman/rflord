@@ -328,6 +328,13 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     elif 240 <= freq_mhz <= 242: return "DAB"
     elif 390 <= freq_mhz <= 400: return "TETRA"
     elif 337 <= freq_mhz <= 362: return "Keyfob"
+    # Military / encrypted
+    elif 140 <= freq_mhz <= 150 and std < 2:
+        return "Mil/Enc"
+    elif 150 <= freq_mhz <= 174 and std < 2:
+        return "Mil/Enc"
+    elif 300 <= freq_mhz <= 330:
+        return "Mil/Enc"
     # Hidden camera / spy tool bands
     elif 900 <= freq_mhz <= 928 and std < 2:
         return "CAM?"
@@ -498,6 +505,16 @@ def main():
                 for s in above_threshold:
                     if s['std'] < 6:
                         voice_result = try_voice_decode(s['freq'] / 1e6)
+                        break
+                
+                # Also try decode on Analog-type signals (play audio sample)
+                for s in above_threshold:
+                    f = s['freq'] / 1e6
+                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    if sig_type == "Analog" and s['std'] < 4:
+                        play_voice_sample(f)
+                        if not voice_result:
+                            voice_result = "analog voice sample"
                         break
                 
                 count = len(above_threshold)
