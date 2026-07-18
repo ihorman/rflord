@@ -568,7 +568,7 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.clrtobot()
     stdscr.refresh()
 
-def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None):
+def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     if known_freqs is None:
         known_freqs = {}
@@ -708,7 +708,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
     if len(ok) > avail: extra += f" +{len(ok)-avail} ok"
     try:
-        keys = f" q:Quit  r:Rescan  v:Voice  +/-:Interval({INTERVAL}s){extra}"
+        voice_str = "ON" if voice_enabled else "OFF"
+        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  +/-:Interval({INTERVAL}s){extra}"
         stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -774,6 +775,7 @@ def main_curses(stdscr, device):
     known_freqs = {}   # freq -> first seen time (for new signal detection)
     last_seen = {}     # freq -> last seen time (for "Last Seen" display)
     alert_count = 0
+    voice_enabled = True
     start_time = time.time()
     
     # Reset HackRF once at startup
@@ -827,7 +829,7 @@ def main_curses(stdscr, device):
             key = round(s['freq'] / 1e6)
             last_seen[key] = now  # Update every scan
         
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
         # Update splash status after first scan
         if not first_scan_done:
@@ -901,7 +903,7 @@ def main_curses(stdscr, device):
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
         # Refresh table after voice (speak() blocks and curses screen goes stale)
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
         # Wait with key handling
         stdscr.nodelay(True)
@@ -917,11 +919,14 @@ def main_curses(stdscr, device):
                 INTERVAL = max(30, INTERVAL - 30)
             elif key == ord('r') or key == ord('R'):
                 break
+            elif key == ord('m') or key == ord('M'):
+                voice_enabled = not voice_enabled
             elif key == ord('v') or key == ord('V'):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
-                speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
+                if voice_enabled:
+                    speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             # Redraw table every 500ms for blink effect
-            draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
+            draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
