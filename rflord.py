@@ -370,7 +370,7 @@ def try_voice_decode(freq_mhz):
     return None
 
 def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
-    """Draw split-screen table: suspicious left, known right."""
+    """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
@@ -382,99 +382,83 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
+    mid = w // 2
     row = 0
-    mid = w // 2  # Split point
     
-    # Header — full width
-    header = f"  RF LORD {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Ihor Kolodyuk"
+    # Header
+    header = f" RF LORD {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Ihor Kolodyuk"
     try:
         stdscr.addstr(row, 0, header[:w-1], curses.color_pair(CP_HEADER) | curses.A_BOLD)
-    except:
-        pass
+    except: pass
     row += 1
     
-    # Column headers — left and right
-    left_hdr = f"  {'SUSPICIOUS':^{mid-4}}"
-    right_hdr = f"  {'KNOWN SIGNALS':^{w - mid - 4}}"
+    # Column titles
     try:
-        stdscr.addstr(row, 0, left_hdr[:mid-1], curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
-        stdscr.addstr(row, mid, right_hdr[:w-mid-1], curses.color_pair(CP_OK) | curses.A_BOLD)
-    except:
-        pass
+        stdscr.addstr(row, 0, f" {'SUSPICIOUS':^{mid-2}}"[:mid-1], curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
+        stdscr.addstr(row, mid, f" {'KNOWN SIGNALS':^{w-mid-2}}"[:w-mid-1], curses.color_pair(CP_OK) | curses.A_BOLD)
+    except: pass
     row += 1
     
-    # Column sub-headers
-    sub_left = f"  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Type':<13}"
-    sub_right = f"  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Band':>4}  {'Identification':<20}"
+    # Sub-headers
     try:
-        stdscr.addstr(row, 0, sub_left[:mid-1], curses.color_pair(CP_DIM))
-        stdscr.addstr(row, mid, sub_right[:w-mid-1], curses.color_pair(CP_DIM))
-    except:
-        pass
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type         "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, mid, " Freq    Pwr   Std  Dist Bnd  Identification    "[:w-mid-1], curses.color_pair(CP_DIM))
+    except: pass
     row += 1
     
     # Separator
     try:
-        stdscr.addstr(row, 0, f"  {'─' * (mid-4)}", curses.color_pair(CP_SEP))
-        stdscr.addstr(row, mid, f"  {'─' * (w-mid-4)}", curses.color_pair(CP_SEP))
-    except:
-        pass
+        stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, mid, (" " + "─" * (w-mid-2))[:w-mid-1], curses.color_pair(CP_SEP))
+    except: pass
     row += 1
     
-    # Data rows
-    max_data_rows = h - row - 2  # Leave 2 for footer
+    # Available rows for data
+    avail = h - row - 2  # 2 for footer
     
-    for i in range(max_data_rows):
-        if row >= h - 2:
-            break
+    for i in range(avail):
+        if row >= h - 2: break
         
-        # Left column — suspicious
+        # Left — suspicious
         if i < len(suspicious):
             s = suspicious[i]
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             sig_type = get_signal_type(f, 0, 0, s['std'])
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
-            line = f"  {f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {sig_type:<13}"
+            line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp))
-            except:
-                pass
+            except: pass
         
-        # Right column — known
+        # Right — known
         if i < len(ok):
             s = ok[i]
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             band = get_band(f)
             art = identify_signal(f, artemis_db) if artemis_db else None
-            art_str = art[:20] if art else ""
-            line = f"  {f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {art_str}"
+            art_str = (art[:18] if art else "")
+            line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}"
             try:
                 stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
-            except:
-                pass
+            except: pass
         
         row += 1
     
     # Footer
-    if row < h:
-        try:
-            stdscr.addstr(row, 0, f"  {'─' * (mid-4)}", curses.color_pair(CP_SEP))
-            stdscr.addstr(row, mid, f"  {'─' * (w-mid-4)}", curses.color_pair(CP_SEP))
-        except:
-            pass
-        row += 1
-    if row < h:
-        extra = ""
-        if len(suspicious) > max_data_rows:
-            extra += f"  +{len(suspicious) - max_data_rows} more suspicious"
-        if len(ok) > max_data_rows:
-            extra += f"  +{len(ok) - max_data_rows} more known"
-        try:
-            stdscr.addstr(row, 0, f"  Ctrl+C to stop{extra}", curses.color_pair(CP_DIM))
-        except:
-            pass
+    try:
+        stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, mid, (" " + "─" * (w-mid-2))[:w-mid-1], curses.color_pair(CP_SEP))
+    except: pass
+    row += 1
+    
+    extra = ""
+    if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
+    if len(ok) > avail: extra += f" +{len(ok)-avail} ok"
+    try:
+        stdscr.addstr(row, 0, f" Ctrl+C{extra}"[:w-1], curses.color_pair(CP_DIM))
+    except: pass
     
     stdscr.refresh()
 
@@ -695,25 +679,23 @@ def main_ansi():
         sys.stdout.write("\033[H")
         
         # Header
-        print(f"{C}  RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
-              f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Ihor Kolodyuk{N}          ")
+        print(f"{C} RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
+              f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Ihor Kolodyuk{N}")
         
-        # Column headers
+        # Column titles
         mid = 42
-        left_title = f"{R}  {'SUSPICIOUS':^{mid-4}}{N}"
-        right_title = f"{G}  {'KNOWN SIGNALS':^{38}}{N}"
-        print(f"{left_title}{right_title}")
+        print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        sub_left = f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Type':<13}{N}"
-        sub_right = f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Band':>4}  {'ID':<20}{N}"
-        print(f"{sub_left}{' ' * (mid - len(sub_left) + len(N) + 8)}{sub_right}")
+        print(f"{D} Freq    Pwr   Std  Dist Type         {N}{D} Freq    Pwr   Std  Dist Bnd  Identification    {N}")
         
         # Separator
-        print(f"{D}  {'─' * (mid-4)}  {'─' * 38}{N}")
+        print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
         
-        # Data rows
-        max_rows = 20
+        # Data rows — STRICT limit to 24 lines total
+        # Total lines: header(1) + titles(1) + sub(1) + sep(1) + data + footer(1) = 5 + data
+        # For 24-line terminal: data = 19 rows max
+        max_rows = 19
         for i in range(max_rows):
             left = ""
             right = ""
@@ -724,7 +706,7 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 sig_type = get_signal_type(f, 0, 0, s['std'])
                 c = R if i < 3 else Y
-                left = f"{c}{f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {sig_type:<13}{N}"
+                left = f"{c}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}{N}"
             
             if i < len(ok):
                 s = ok[i]
@@ -732,22 +714,19 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 band = get_band(f)
                 art = identify_signal(f, artemis_db) if artemis_db else None
-                art_str = art[:20] if art else ""
-                right = f"{G}{f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {art_str}{N}"
+                art_str = art[:18] if art else ""
+                right = f"{G}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}{N}"
             
             if left or right:
-                # Pad left to fixed width
-                left_pad = f"  {left:<{mid - 2 + len(R) + len(N)}}"
-                print(f"{left_pad}  {right}")
+                left_pad = f" {left:<{mid - 1 + len(R) + len(N)}}"
+                print(f"{left_pad} {right}")
         
         # Footer
-        print(f"{D}  {'─' * (mid-4)}  {'─' * 38}{N}")
         extra = ""
-        if len(suspicious) > max_rows:
-            extra += f"  +{len(suspicious) - max_rows} sus"
-        if len(ok) > max_rows:
-            extra += f"  +{len(ok) - max_rows} ok"
-        print(f"{D}  Ctrl+C{extra}{N}")
+        if len(suspicious) > max_rows: extra += f" +{len(suspicious)-max_rows} sus"
+        if len(ok) > max_rows: extra += f" +{len(ok)-max_rows} ok"
+        print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
+        print(f"{D} Ctrl+C{extra}{N}")
         sys.stdout.write("\033[J")
         sys.stdout.flush()
         
