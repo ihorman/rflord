@@ -44,7 +44,7 @@ def speak(text):
     try:
         raw = tempfile.mktemp(suffix='.mp3', prefix='scan_tts_')
         out = tempfile.mktemp(suffix='.wav', prefix='hal_')
-        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", TTS_RATE,
+        subprocess.run(["edge-tts", "--voice", TTS_VOICE, f"--rate={TTS_RATE}",
                         "--text", text, "--write-media", raw],
                        capture_output=True, timeout=10)
         if os.path.exists(raw):

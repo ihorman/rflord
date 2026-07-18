@@ -674,7 +674,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
     if len(ok) > avail: extra += f" +{len(ok)-avail} ok"
     try:
-        keys = f" q:Quit  s:Scan  v:Voice  +/-:Interval({INTERVAL}s){extra}"
+        keys = f" q:Quit  r:Rescan  v:Voice  +/-:Interval({INTERVAL}s){extra}"
         stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -879,7 +879,7 @@ def main_curses(stdscr, device):
                 INTERVAL = min(600, INTERVAL + 30)
             elif key == ord('-'):
                 INTERVAL = max(30, INTERVAL - 30)
-            elif key == ord('s') or key == ord('S'):
+            elif key == ord('r') or key == ord('R'):
                 break
             elif key == ord('v') or key == ord('V'):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
