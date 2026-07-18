@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-scan-table — Clean table-only RF monitor with voice alerts.
-Run in any terminal: scan-table [--interval 60]
+rflord — RF Lord: Real-time RF spectrum monitor with drone detection and voice alerts.
+Run in any terminal: rflord [--interval 60]
+Author: Ihor Kolodyuk
 """
+
+import warnings
+warnings.filterwarnings("ignore")
+import os
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 import subprocess
 import sys
@@ -30,7 +36,7 @@ TTS_VOICE = "en-US-SteffanNeural"
 def run_cmd(cmd, timeout=60):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout + r.stderr
+        return r.stdout  # Ignore stderr to prevent table corruption
     except:
         return ""
 
@@ -177,15 +183,20 @@ def clear():
     sys.stdout.flush()
 
 def try_voice_decode(freq_mhz):
-    """Try to decode voice at frequency. Returns description or None."""
+    """Try to decode voice at frequency. Records and plays FM/AM audio if voice band."""
     try:
         scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
         cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
         r = run_cmd(cmd, timeout=15)
+        
+        # If signal is in FM/AM voice band, record and play audio
+        is_voice_band = (88 <= freq_mhz <= 108) or (108 <= freq_mhz <= 137) or (150 <= freq_mhz <= 174) or (400 <= freq_mhz <= 470)
+        if is_voice_band:
+            play_voice_sample(freq_mhz)
+        
         if "DMR" in r: return "DMR digital voice"
         if "D-STAR" in r: return "D-STAR ham radio"
         if "NFM" in r and "Power" in r:
-            # Check if it's actually voice
             if "Analog NFM" in r: return "FM voice radio"
         if "AM" in r and "Air band" in r: return "AM aviation radio"
         if "POCSAG" in r: return "POCSAG pager"
@@ -194,6 +205,67 @@ def try_voice_decode(freq_mhz):
     except:
         pass
     return None
+
+def play_voice_sample(freq_mhz):
+    """Record IQ at frequency, demodulate to audio, and play it."""
+    try:
+        freq_hz = int(freq_mhz * 1e6)
+        raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
+        wav = tempfile.mktemp(suffix='.wav', prefix='voice_')
+        
+        # Capture IQ (2 seconds)
+        subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
+                        "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
+                       capture_output=True, timeout=10)
+        
+        if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
+            return
+        
+        # Demodulate
+        import numpy as np
+        data = np.fromfile(raw, dtype=np.int8)
+        iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
+        iq /= 128.0
+        os.unlink(raw)
+        
+        if 88 <= freq_mhz <= 108:
+            # FM broadcast — wide FM with de-emphasis
+            phase = np.unwrap(np.angle(iq))
+            audio = np.diff(phase) * 2000000 / (2 * np.pi)
+            # De-emphasis filter (75μs)
+            alpha = 1.0 / (1.0 + 2000000 * 75e-6)
+            for i in range(1, len(audio)):
+                audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
+        else:
+            # Narrow FM (PMR, air band AM, etc.)
+            phase = np.unwrap(np.angle(iq))
+            audio = np.diff(phase) * 2000000 / (2 * np.pi)
+        
+        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.8
+        
+        # Resample to 48kHz
+        import wave
+        target_rate = 48000
+        src_rate = 2000000
+        step = src_rate / target_rate
+        indices = np.arange(0, len(audio), step).astype(int)
+        indices = indices[indices < len(audio)]
+        audio_48k = audio[indices]
+        
+        # Write WAV
+        audio_16 = (audio_48k * 32767).astype(np.int16)
+        with wave.open(wav, 'w') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(target_rate)
+            w.writeframes(audio_16.tobytes())
+        
+        # Play
+        ensure_sink()
+        subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        os.unlink(wav)
+    except Exception:
+        pass
 
 def get_signal_type(freq_mhz, bw, pmr, std):
     """Classify signal type for display."""
@@ -323,7 +395,8 @@ def main():
         scan_num += 1
         
         if device == "hackrf":
-            run_cmd("sudo usbreset 1d50:6089 2>/dev/null")
+            subprocess.run(["sudo", "usbreset", "1d50:6089"],
+                           capture_output=True, timeout=5)
             time.sleep(2)
         
         all_signals = []
