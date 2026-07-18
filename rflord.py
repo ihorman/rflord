@@ -48,9 +48,12 @@ def run_cmd(cmd, timeout=60):
 def detect_device():
     lsusb = run_cmd("lsusb")
     if "1d50:6018" in lsusb:
+        print("PortaPack detected, switching to HackRF mode...", flush=True)
         import serial
+        switched = False
         for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
             try:
+                print(f"  Trying {port}...", flush=True)
                 s = serial.Serial(port, 115200, timeout=2)
                 time.sleep(0.5)
                 s.write(b'restore\r\n')
@@ -59,14 +62,28 @@ def detect_device():
                 s.write(b'hackrf\r\n')
                 time.sleep(4)
                 s.close()
+                switched = True
+                print(f"  Sent mode switch on {port}", flush=True)
                 break
-            except:
-                pass
+            except Exception as e:
+                print(f"  {port} failed: {e}", flush=True)
+        # Force USB re-enumerate
+        run_cmd("sudo usbreset 1d50:6018")
+        time.sleep(3)
         lsusb = run_cmd("lsusb")
+        if "1d50:6089" in lsusb:
+            print("  Switched to HackRF mode!", flush=True)
+        elif switched:
+            print("  Mode switch sent but HackRF not detected yet, waiting...", flush=True)
+            time.sleep(5)
+            run_cmd("sudo usbreset 1d50:6089")
+            time.sleep(2)
+            lsusb = run_cmd("lsusb")
     if "1d50:6089" in lsusb:
         return "hackrf"
     if "0bda:2838" in lsusb:
         return "rtlsdr"
+    print(f"SDR not found. USB devices: {lsusb[:200]}", flush=True)
     return None
 
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
