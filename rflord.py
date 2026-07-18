@@ -273,7 +273,7 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if artemis_db:
         art_name = identify_signal(freq_mhz, artemis_db)
         if art_name:
-            return art_name[:13]
+            return art_name[:9]
     
     # Known real signals
     if 240 <= freq_mhz <= 242: return "DAB"
@@ -541,7 +541,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
-            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}"
+            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -907,7 +907,7 @@ def main_ansi():
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
-                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}{N}"
+                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
