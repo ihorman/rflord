@@ -543,7 +543,6 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     if known_freqs is None:
         known_freqs = {}
-    stdscr.erase()
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
@@ -677,6 +676,12 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         keys = f" q:Quit  s:Scan  v:Voice  +/-:Interval({INTERVAL}s){extra}"
         stdscr.addstr(row, 0, keys[:w-1], curses.color_pair(CP_DIM))
     except: pass
+    
+    # Clear any remaining rows below (leftover from previous draw)
+    for r in range(row + 1, h):
+        try:
+            stdscr.addstr(r, 0, " " * (w - 1))
+        except: pass
     
     stdscr.refresh()
 
