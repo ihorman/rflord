@@ -576,7 +576,177 @@ def main_curses(stdscr):
         time.sleep(INTERVAL)
 
 def main():
-    curses.wrapper(main_curses)
+    # Try curses first (proper terminal), fallback to ANSI
+    try:
+        if sys.stdout.isatty():
+            curses.wrapper(main_curses)
+        else:
+            # Non-TTY: use ANSI mode
+            main_ansi()
+    except Exception:
+        main_ansi()
+
+def main_ansi():
+    """ANSI fallback mode for non-TTY or when curses fails."""
+    global INTERVAL, VOICE_THRESHOLD
+    
+    for i, arg in enumerate(sys.argv[1:]):
+        if arg == "--interval" and i + 2 <= len(sys.argv):
+            INTERVAL = int(sys.argv[i + 2])
+        if arg == "--threshold" and i + 2 <= len(sys.argv):
+            VOICE_THRESHOLD = int(sys.argv[i + 2])
+    
+    device = detect_device()
+    if not device:
+        print("No SDR device found.")
+        sys.exit(1)
+    
+    ensure_sink()
+    artemis_db = load_artemis()
+    
+    bands = [
+        (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
+        (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
+        (5150, 5900, 500000, 3),
+    ]
+    
+    scan_num = 0
+    known_freqs = set()
+    alert_count = 0
+    start_time = time.time()
+    
+    # ANSI colors
+    R = "\033[1;31m"; Y = "\033[1;33m"; G = "\033[1;32m"; C = "\033[1;36m"; D = "\033[2m"; N = "\033[0m"
+    
+    signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h\033[H\033[J"), print(f"\n{C}Stopped.{N}"), sys.exit(0)))
+    print("\033[2J\033[H\033[?25l", end="")
+    
+    while True:
+        scan_num += 1
+        
+        if device == "hackrf":
+            subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+            time.sleep(2)
+        
+        all_signals = []
+        for f_lo, f_hi, bw, n in bands:
+            output = hackrf_sweep(f_lo, f_hi, bw, n)
+            all_signals.extend(parse_sweep(output))
+        
+        seen = {}
+        unique = []
+        for s in all_signals:
+            key = round(s['freq'] / 1e6)
+            if key not in seen or s['peak'] > seen[key]['peak']:
+                seen[key] = s
+        unique = list(seen.values())
+        
+        suspicious = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'],
+                            key=lambda x: x['peak'], reverse=True)
+        ok = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) != 'sus'],
+                    key=lambda x: x['peak'], reverse=True)
+        
+        new_suspicious = []
+        for s in unique:
+            f = s['freq'] / 1e6
+            if classify(f, s['peak'], s['std']) == "sus":
+                if round(f) not in known_freqs:
+                    known_freqs.add(round(f))
+                    new_suspicious.append(s)
+                    alert_count += 1
+        
+        elapsed = int(time.time() - start_time)
+        uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+        
+        sys.stdout.write("\033[H")
+        
+        print(f"{C}  RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
+              f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Ihor Kolodyuk{N}          ")
+        print(f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<13} Identification{N}")
+        
+        max_rows = 20
+        max_sus = min(len(suspicious), 8)
+        max_ok = min(len(ok), max_rows - max_sus - 2)
+        
+        for i, s in enumerate(suspicious[:max_sus]):
+            f = s['freq'] / 1e6
+            dist = est_distance(f, s['peak'])
+            band = get_band(f)
+            sig_type = get_signal_type(f, 0, 0, s['std'])
+            art = identify_signal(f, artemis_db) if artemis_db else None
+            art_str = f" {D}{art[:30]}{N}" if art else ""
+            c = R if i < 3 else Y
+            print(f"  {c}{f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<13}{N}{art_str}")
+        
+        if len(suspicious) > max_sus:
+            print(f"  {D}  ... +{len(suspicious) - max_sus} more{N}")
+        
+        if suspicious and ok:
+            print(f"{D}  {'─' * 70}{N}")
+        
+        for s in ok[:max_ok]:
+            f = s['freq'] / 1e6
+            dist = est_distance(f, s['peak'])
+            band = get_band(f)
+            art = identify_signal(f, artemis_db) if artemis_db else None
+            art_str = f" {D}{art[:30]}{N}" if art else ""
+            print(f"  {G}{f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {'':<13}{N}{art_str}")
+        
+        print(f"{D}  {'─' * 70}{N}")
+        print(f"{D}  Ctrl+C{N}")
+        sys.stdout.write("\033[J")
+        sys.stdout.flush()
+        
+        if scan_num % 10 == 0:
+            cleanup_old_decoded()
+        
+        # Voice alert (same as curses version)
+        if new_suspicious:
+            new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
+            above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
+            if above_threshold:
+                announcements = []
+                for s in above_threshold[:4]:
+                    f = s['freq'] / 1e6
+                    dist = est_distance(f, s['peak'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    artemis_name = identify_signal(f, artemis_db)
+                    if artemis_name:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    else:
+                        announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                voice_result = None
+                for s in above_threshold:
+                    if s['std'] < 6:
+                        voice_result = try_voice_decode(s['freq'] / 1e6)
+                        break
+                for s in above_threshold:
+                    f = s['freq'] / 1e6
+                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    if sig_type == "Analog" and s['std'] < 4:
+                        play_voice_sample(f)
+                        if not voice_result:
+                            voice_result = "analog voice sample, saved to decoded folder"
+                        break
+                count = len(above_threshold)
+                if count == 1:
+                    msg = f"Alert. New signal at {announcements[0]}."
+                elif count == 2:
+                    msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                else:
+                    msg = f"Alert. {count} new signals above threshold. Strongest at {announcements[0]}."
+                    if count > 2:
+                        msg += f" Also at {announcements[1]}."
+                if voice_result:
+                    msg += f" Detected {voice_result}."
+                speak(msg)
+            else:
+                s0 = new_suspicious[0]
+                f0 = s0['freq'] / 1e6
+                dist = est_distance(f0, s0['peak'])
+                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
+        
+        time.sleep(INTERVAL)
 
 if __name__ == "__main__":
     main()
