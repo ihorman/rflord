@@ -204,6 +204,14 @@ def est_distance(freq_mhz, power_dbfs):
     else:
         return f"{meters/1000:.0f}km"
 
+def speak_distance(dist_str):
+    """Convert distance string to spoken text: '284m' -> '284 meters'."""
+    if dist_str.endswith('km'):
+        return dist_str.replace('km', ' kilometers')
+    elif dist_str.endswith('m'):
+        return dist_str.replace('m', ' meters')
+    return dist_str
+
 def speak(text):
     """Speak text via edge-tts. No timeout — let it play fully."""
     try:
@@ -715,13 +723,13 @@ def main_curses(stdscr, device):
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                     if artemis_entry:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {dist}")
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {speak_distance(dist)}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 
                 voice_result = None
                 for s in above_threshold:
@@ -1017,13 +1025,13 @@ def main_ansi():
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                     if artemis_entry:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {dist}")
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {speak_distance(dist)}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
