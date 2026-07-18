@@ -636,7 +636,16 @@ def main_curses(stdscr, device):
     artemis_db = load_artemis()
     
     db_count = len(artemis_db) if artemis_db else 0
-    status.append(f"Signatures databases loaded: OK ({db_count} entries)")
+    try:
+        from spy_db import SPY_DEVICES
+        spy_count = len(SPY_DEVICES)
+    except: spy_count = 0
+    try:
+        from drone_rf_db import DRONE_SIGNATURES
+        drone_count = len(DRONE_SIGNATURES)
+    except: drone_count = 0
+    total = db_count + spy_count + drone_count
+    status.append(f"Signatures databases loaded: OK ({total} total: {db_count} Artemis, {spy_count} spy, {drone_count} drone)")
     draw_splash(stdscr, device, status)
     
     bands = [
