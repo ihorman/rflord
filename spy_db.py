@@ -101,6 +101,18 @@ SIGNAL_ICONS = {
     "Keyfob": "🔑",
 }
 
+import unicodedata
+
+def pad_icon(icon):
+    """Pad icon to exactly 2 display cells."""
+    w = 0
+    for c in icon:
+        ew = unicodedata.east_asian_width(c)
+        w += 2 if ew in ('W', 'F') else 1
+    if w < 2:
+        return icon + ' ' * (2 - w)
+    return icon
+
 # Threat level icons
 THREAT_ICONS = {
     0: "🔴",  # Critical

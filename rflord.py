@@ -19,7 +19,7 @@ import signal
 import shutil
 import glob
 import curses
-from spy_db import identify_spy_device, get_signal_icon, get_threat_icon
+from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
 VERSION = "v0.5.13"
@@ -541,7 +541,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             sig_type = get_signal_type(f, 0, 0, s["std"], artemis_db)
-            icon = get_signal_icon(sig_type, f, s["std"])
+            icon = pad_icon(get_signal_icon(sig_type, f, s["std"]))
             # Remark: prefer Artemis identification over spy_db
             # Only use spy_db if signal type is unknown/suspicious
             known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
@@ -931,7 +931,7 @@ def main_ansi():
                 f = s['freq'] / 1e6
                 dist = est_distance(f, s['peak'])
                 sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                icon = get_signal_icon(sig_type, f, s['std'])
+                icon = pad_icon(get_signal_icon(sig_type, f, s['std']))
                 # Remark: prefer Artemis identification over spy_db
                 known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
                                "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
