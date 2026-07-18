@@ -754,6 +754,24 @@ def cleanup_old_logs():
 # Initialize logger
 log = setup_logger()
 
+def time_ago(timestamp):
+    """Format timestamp as human-readable time ago."""
+    diff = time.time() - timestamp
+    if diff < 60:
+        return f"{int(diff)}s"
+    elif diff < 3600:
+        m = int(diff / 60)
+        s = int(diff % 60)
+        return f"{m}m{s:02d}s" if s else f"{m}m"
+    elif diff < 86400:
+        h = int(diff / 3600)
+        m = int((diff % 3600) / 60)
+        return f"{h}h{m:02d}m" if m else f"{h}h"
+    else:
+        d = int(diff / 86400)
+        h = int((diff % 86400) / 3600)
+        return f"{d}d{h:02d}h" if h else f"{d}d"
+
 def main():
     # Detect device BEFORE curses takes over terminal
     device = detect_device()
@@ -971,21 +989,3 @@ def main_ansi():
 
 if __name__ == "__main__":
     main()
-
-def time_ago(timestamp):
-    """Format timestamp as human-readable time ago."""
-    diff = time.time() - timestamp
-    if diff < 60:
-        return f"{int(diff)}s"
-    elif diff < 3600:
-        m = int(diff / 60)
-        s = int(diff % 60)
-        return f"{m}m{s:02d}s" if s else f"{m}m"
-    elif diff < 86400:
-        h = int(diff / 3600)
-        m = int((diff % 3600) / 60)
-        return f"{h}h{m:02d}m" if m else f"{h}h"
-    else:
-        d = int(diff / 86400)
-        h = int((diff % 86400) / 3600)
-        return f"{d}d{h:02d}h" if h else f"{d}d"
