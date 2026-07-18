@@ -110,9 +110,19 @@ THREAT_ICONS = {
 }
 
 def identify_spy_device(freq_mhz, std):
-    """Check if frequency matches known spy device."""
+    """Check if frequency matches known spy device.
+    Camera/FPV bands only flagged if std < 2 (continuous carrier).
+    Bursty signals (std > 3) in those bands are cellular/digital, not cameras.
+    """
     for lo, hi, name, icon, threat in SPY_DEVICES:
         if lo <= freq_mhz <= hi:
+            # Camera/FPV bands: only flag if continuous carrier (std < 2)
+            # In Ukraine, 1080-1300 MHz is CDMA2000 cellular (bursty, std > 3)
+            # 900-928 MHz is GSM cellular
+            # 2400-2483 MHz is WiFi
+            if "Camera" in name or "FPV" in name:
+                if std >= 2:
+                    continue  # Not a camera — skip to next entry
             return name, icon, threat
     return None, None, None
 

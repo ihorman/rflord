@@ -22,7 +22,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon
 
 # Config
-VERSION = "v0.5.7"
+VERSION = "v0.5.13"
 INTERVAL = 120
 TTS_VOICE = "en-US-SteffanNeural"
 VOICE_THRESHOLD = -15
