@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.raw
+*.wav
+*.mp3
+*.png
+/tmp/
+*.egg-info/
+dist/
+build/
+.eggs/
+*.so
+.DS_Store
