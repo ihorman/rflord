@@ -491,7 +491,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
-    mid = max(55, int(w * 0.6))
+    mid = int(w * 0.6)
     row = 0
     
     # Header
@@ -540,10 +540,13 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
             if spy_name:
                 log.critical(f"SPY: {spy_name} at {f:.1f} MHz")
-                remark = spy_name[:12]
+                remark = spy_name
             else:
                 art = identify_signal(f, artemis_db) if artemis_db else None
-                remark = art[:12] if art else ""
+                remark = art if art else ""
+            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(9)+sp+ago(5)+sp = 44 visible cells
+            remark_w = max(12, mid - 46)
+            remark = remark[:remark_w]
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
@@ -914,10 +917,12 @@ def main_ansi():
                 # Check spy device
                 spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                 if spy_name:
-                    remark = spy_name[:12]
+                    remark = spy_name
                 else:
                     art = identify_signal(f, artemis_db) if artemis_db else None
-                    remark = art[:12] if art else ""
+                    remark = art if art else ""
+                remark_w = max(12, mid - 46)
+                remark = remark[:remark_w]
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
