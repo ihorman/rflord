@@ -113,6 +113,7 @@ def get_band(f):
     return "?"
 
 def classify(f, power, std):
+    # Known normal signals
     wifi_ch = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472]
     for ch in wifi_ch:
         if abs(f - ch) < 3:
@@ -137,17 +138,29 @@ def classify(f, power, std):
         return "ok"
     if 510 <= f <= 610:
         return "ok"
-    # Known military/satellite signals
-    if 225 <= f <= 400 and std > 3:
-        return "ok"  # Link-11 with bursty data
-    if 243 <= f <= 244:
-        return "ok"  # Milstar
-    if 264 <= f <= 266:
-        return "ok"  # Gonets
-    if 140 <= f <= 150 and std < 2:
-        return "ok"  # Military
-    if 150 <= f <= 174 and std < 2:
-        return "ok"  # Military
+    
+    # SUSPICIOUS — military, spy, FPV, unknown transmitters
+    if 225 <= f <= 400:  # Link-11, military UHF
+        return "sus"
+    if 243 <= f <= 244:  # Milstar
+        return "sus"
+    if 264 <= f <= 266:  # Gonets
+        return "sus"
+    if 140 <= f <= 150:  # Military CW
+        return "sus"
+    if 300 <= f <= 330:  # Military
+        return "sus"
+    if 900 <= f <= 928 and std < 2:  # Possible hidden camera
+        return "sus"
+    if 1080 <= f <= 1300 and std < 2:  # Spy camera
+        return "sus"
+    if 1200 <= f <= 1400 and std < 2:  # Spy camera
+        return "sus"
+    if 5725 <= f <= 5875 and std < 2:  # FPV video
+        return "sus"
+    if 2410 <= f <= 2483 and std < 2 and power > -25:  # Possible camera
+        return "sus"
+    
     if power > -20:
         return "sus"
     return "ok"
