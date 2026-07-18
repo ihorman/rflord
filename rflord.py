@@ -33,6 +33,51 @@ BG = "\033[48;5;235m"  # dark background
 INTERVAL = 120
 TTS_VOICE = "en-US-SteffanNeural"
 VOICE_THRESHOLD = -15  # dBFS — announce signals stronger than this
+ARTEMIS_DB = "/opt/artemis/Data/db.csv"
+
+def load_artemis():
+    """Load Artemis signal database."""
+    db = []
+    if not os.path.exists(ARTEMIS_DB):
+        return db
+    try:
+        with open(ARTEMIS_DB, 'r') as f:
+            for line in f:
+                parts = line.strip().split('*')
+                if len(parts) < 8:
+                    continue
+                try:
+                    freq_low = int(parts[1]) if parts[1] else 0
+                    freq_high = int(parts[2]) if parts[2] else 0
+                except:
+                    continue
+                if freq_low > 0 and freq_high > 0:
+                    db.append({
+                        'name': parts[0].strip("'"),
+                        'freq_low': freq_low,
+                        'freq_high': freq_high,
+                        'modulation': parts[3],
+                        'country': parts[6],
+                    })
+    except:
+        pass
+    return db
+
+def identify_signal(freq_mhz, artemis_db):
+    """Identify signal using Artemis database. Returns name or None."""
+    freq_hz = freq_mhz * 1e6
+    best = None
+    best_width = float('inf')
+    for entry in artemis_db:
+        tol = max((entry['freq_high'] - entry['freq_low']) * 0.1, 2_000_000)
+        if (entry['freq_low'] - tol) <= freq_hz <= (entry['freq_high'] + tol):
+            width = entry['freq_high'] - entry['freq_low']
+            if width < best_width:
+                best_width = width
+                best = entry
+    if best:
+        return best['name']
+    return None
 
 def run_cmd(cmd, timeout=60):
     try:
@@ -303,12 +348,12 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     elif pmr > 4: return "Bursty"
     else: return "Analog"
 
-def format_row(freq, power, std, dist, band, sig_type, cw, status, color):
+def format_row(freq, power, std, dist, band, sig_type, cw, status, color, artemis_id=""):
     """Format a single table row with fixed-width columns."""
     return (f"  {color}{freq:>8.1f}  {power:>+5.1f}  {std:>4.1f}  "
-            f"{dist:>6}  {band:>5}  {sig_type:>8}{cw:<2}  {status}{N}")
+            f"{dist:>6}  {band:>5}  {sig_type:>8}{cw:<2}  {status}  {artemis_id}{N}")
 
-def print_table(signals, start_time, known_freqs, alert_count):
+def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
     # Separate signals
     all_suspicious = []
     all_ok = []
@@ -339,8 +384,8 @@ def print_table(signals, start_time, known_freqs, alert_count):
     print(f"{C}  {'─' * 78}{N}")
     
     # Column header (fixed position)
-    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>8}  {'St':>2}")
-    print(f"  {'─' * 78}")
+    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>8}  {'St':>2}  Identification")
+    print(f"  {'─' * 90}")
     
     # Suspicious signals
     row = 0
@@ -355,7 +400,9 @@ def print_table(signals, start_time, known_freqs, alert_count):
             cw = "⚡" if s['std'] < 2 else " "
             st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
             sig_type = get_signal_type(f, 0, 0, s['std'])
-            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, R))
+            artemis_id = identify_signal(f, artemis_db) if artemis_db else None
+            artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
+            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, R, artemis_str))
             row += 1
         
         for s in rest:
@@ -365,7 +412,9 @@ def print_table(signals, start_time, known_freqs, alert_count):
             cw = "⚡" if s['std'] < 2 else " "
             st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
             sig_type = get_signal_type(f, 0, 0, s['std'])
-            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, Y))
+            artemis_id = identify_signal(f, artemis_db) if artemis_db else None
+            artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
+            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, Y, artemis_str))
             row += 1
         
         if len(all_suspicious) > 12:
@@ -381,7 +430,9 @@ def print_table(signals, start_time, known_freqs, alert_count):
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
-        print(format_row(f, s['peak'], s['std'], dist, band, "", "", "", G))
+        artemis_id = identify_signal(f, artemis_db) if artemis_db else None
+        artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
+        print(format_row(f, s['peak'], s['std'], dist, band, "", "", "", G, artemis_str))
         row += 1
     
     # Fill remaining rows with blank to prevent leftover
@@ -407,6 +458,7 @@ def main():
         sys.exit(1)
     
     ensure_sink()
+    artemis_db = load_artemis()
     
     bands = [
         (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
@@ -455,7 +507,7 @@ def main():
                     new_suspicious.append(s)
                     alert_count += 1
         
-        print_table(unique, start_time, known_freqs, alert_count)
+        print_table(unique, start_time, known_freqs, alert_count, artemis_db)
         
         # Voice alert — announce all new signals above threshold
         if new_suspicious:
@@ -471,7 +523,12 @@ def main():
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'])
-                    announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                    # Check Artemis for identification
+                    artemis_name = identify_signal(f, artemis_db)
+                    if artemis_name:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    else:
+                        announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 
                 # Try voice decode on strongest narrowband signal
                 voice_result = None
