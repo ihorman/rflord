@@ -699,6 +699,8 @@ def main_ansi():
                 seen[key] = s
         suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
                             key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
+        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) != "sus"],
+                    key=lambda x: x["peak"], reverse=True)
 
 
         
