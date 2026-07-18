@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.53"
+VERSION = "v0.5.54"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -524,12 +524,8 @@ def draw_splash(stdscr, device, status_lines=None):
     
     lines = [
         "",
-        "  ██████╗  ███████╗██╗      ██████╗ ██████╗ ██████╗ ",
-        "  ██╔══██╗██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗",
-        "  ██████╔╝█████╗  ██║     ██║   ██║██████╔╝██║  ██║",
-        "  ██╔══██╗██╔══╝  ██║     ██║   ██║██╔══██╗██║  ██║",
-        "  ██║  ██║██║    ███████╗╚██████╔╝██║  ██║██████╔╝",
-        "  ╚═╝  ╚═╝╚═╝    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ",
+        "  R F L O R D",
+        "  ===========",
         "",
         f"  RF SPECTRUM MONITOR  {VERSION}",
         f"  Author: Ihor Kolodyuk",
@@ -551,14 +547,15 @@ def draw_splash(stdscr, device, status_lines=None):
         if row >= h - 1:
             break
         try:
-            if "████" in line:
-                color = CP_SUS_RED
-                stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
-            elif ": OK" in line:
+            if ": OK" in line:
                 color = CP_OK
                 col = max(0, (w - len(line)) // 2)
                 stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
             elif "in progress" in line:
+                color = CP_SUS_RED
+                col = max(0, (w - len(line)) // 2)
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
+            elif "R F L O R D" in line:
                 color = CP_SUS_RED
                 col = max(0, (w - len(line)) // 2)
                 stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
@@ -576,12 +573,21 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.clrtobot()
     stdscr.refresh()
 
+_first_draw = True
+
 def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
+    global _first_draw
     if known_freqs is None:
         known_freqs = {}
-    stdscr.clear()  # Clear entire screen to remove splash artifacts
-    stdscr.refresh()  # Force screen clear before drawing
+    if _first_draw:
+        # Aggressive clear to remove splash artifacts (only first time)
+        stdscr.erase()
+        stdscr.clearok(True)
+        stdscr.refresh()
+        _first_draw = False
+    else:
+        stdscr.erase()
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
