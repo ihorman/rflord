@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.52"
+VERSION = "v0.5.53"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -581,6 +581,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     if known_freqs is None:
         known_freqs = {}
     stdscr.clear()  # Clear entire screen to remove splash artifacts
+    stdscr.refresh()  # Force screen clear before drawing
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
