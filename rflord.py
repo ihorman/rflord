@@ -510,7 +510,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type       Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type           Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
@@ -544,13 +544,13 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             else:
                 art = identify_signal(f, artemis_db) if artemis_db else None
                 remark = art if art else ""
-            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(9)+sp+ago(5)+sp = 44 visible cells
-            remark_w = max(12, mid - 46)
+            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(14)+sp+ago(5)+sp = 49 visible cells
+            remark_w = max(12, mid - 51)
             remark = remark[:remark_w]
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
-            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}"
+            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<14} {ago:>5} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -562,7 +562,9 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             dist = est_distance(f, s['peak'])
             band = get_band(f)
             art = identify_signal(f, artemis_db) if artemis_db else None
-            art_str = (art[:15] if art else "")
+            # Right table: freq(6)+sp+pwr(5)+sp+std(4)+sp+dist(5)+sp+band(4)+sp = 27 fixed
+            id_w = max(15, (w - mid) - 28)
+            art_str = (art[:id_w] if art else "")
             line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}"
             try:
                 stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
@@ -891,11 +893,11 @@ def main_ansi():
               f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Author: Ihor Kolodyuk{N}")
         
         # Column titles
-        mid = 55
+        mid = 60
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D} Freq    Pwr   Std  Dist Type       Last {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}{N}")
+        print(f"{D} Freq    Pwr   Std  Dist Type           Last {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
@@ -921,12 +923,12 @@ def main_ansi():
                 else:
                     art = identify_signal(f, artemis_db) if artemis_db else None
                     remark = art if art else ""
-                remark_w = max(12, mid - 46)
+                remark_w = max(12, mid - 51)
                 remark = remark[:remark_w]
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
-                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}{N}"
+                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<14} {ago:>5} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
@@ -934,7 +936,7 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 band = get_band(f)
                 art = identify_signal(f, artemis_db) if artemis_db else None
-                art_str = art[:15] if art else ""
+                art_str = art[:25] if art else ""
                 right = f"{G}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}{N}"
             
             if left or right:
