@@ -137,6 +137,17 @@ def classify(f, power, std):
         return "ok"
     if 510 <= f <= 610:
         return "ok"
+    # Known military/satellite signals
+    if 225 <= f <= 400 and std > 3:
+        return "ok"  # Link-11 with bursty data
+    if 243 <= f <= 244:
+        return "ok"  # Milstar
+    if 264 <= f <= 266:
+        return "ok"  # Gonets
+    if 140 <= f <= 150 and std < 2:
+        return "ok"  # Military
+    if 150 <= f <= 174 and std < 2:
+        return "ok"  # Military
     if power > -20:
         return "sus"
     return "ok"
@@ -222,12 +233,9 @@ def identify_signal(freq_mhz, artemis_db):
     return None
 
 def get_signal_type(freq_mhz, bw, pmr, std):
-    if 230 <= freq_mhz <= 285:
-        return "Display Port"
-    elif 612 <= freq_mhz <= 700:
-        if bw < 10000: return "USB-noise"
-        else: return "USB-burst"
-    elif 240 <= freq_mhz <= 242: return "DAB"
+    # Known real signals FIRST (before Display Port range)
+    if 240 <= freq_mhz <= 242: return "DAB"
+    elif 235 <= freq_mhz <= 238: return "DAB+"
     elif 390 <= freq_mhz <= 400: return "TETRA"
     elif 337 <= freq_mhz <= 362: return "Keyfob"
     elif 140 <= freq_mhz <= 150 and std < 2:
@@ -236,6 +244,21 @@ def get_signal_type(freq_mhz, bw, pmr, std):
         return "Mil/Enc"
     elif 300 <= freq_mhz <= 330:
         return "Mil/Enc"
+    # Real signals in Display Port range (230-285 MHz)
+    elif 225 <= freq_mhz <= 400 and std > 3:
+        return "Link-11"
+    elif 243 <= freq_mhz <= 244:
+        return "Milstar"
+    elif 264 <= freq_mhz <= 266:
+        return "Gonets"
+    elif 174 <= freq_mhz <= 230:
+        return "DAB+"
+    # Display Port range (230-285 MHz) — only if NOT a known signal
+    elif 230 <= freq_mhz <= 285:
+        return "Display Port"
+    elif 612 <= freq_mhz <= 700:
+        if bw < 10000: return "USB-noise"
+        else: return "USB-burst"
     elif 900 <= freq_mhz <= 928 and std < 2:
         return "CAM?"
     elif 1080 <= freq_mhz <= 1300 and std < 2:
