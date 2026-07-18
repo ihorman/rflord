@@ -22,6 +22,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon
 
 # Config
+VERSION = "v0.5.7"
 INTERVAL = 120
 TTS_VOICE = "en-US-SteffanNeural"
 VOICE_THRESHOLD = -15
@@ -411,6 +412,51 @@ def signal_priority(freq_mhz, std):
     # Priority 2: Other suspicious (USB noise, Display Port, etc.)
     return 2
 
+def draw_splash(stdscr, device, scan_num=0):
+    """Show loading splash with version info."""
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    
+    lines = [
+        "",
+        f"  ██▀███  ▄▄▄      █    ██  ███▄    █ ▄▄▄█████▓",
+        f"▓██ ▒ ██▒▒████▄    ██  ▓██▒ ██ ▀█   █ ▓  ██▒ ▓▒",
+        f"▓██ ░▄██ ▒██  ▀█▄ ▓██  ▒██░▓██  ▀█ ██▒▒ ▓██░ ▓░",
+        f"▒██▀▀█▄  ░██▄▄▄▄██▓▓█  ░██░▓██▒  ▐▌██▒░ ▓██▓ ░ ",
+        f"░██▓ ▒██▒ ▓█   ▓██▒▒█████▓ ▒██░   ▓██░  ▒██▒ ░ ",
+        f"░ ▒▓ ░▒▓░ ▒▒   ▓▒█░░▒▓▒ ▒ ▒ ░ ▒░   ▒ ▒   ▒ ░░  ",
+        f"  ░▒ ░ ▒░  ▒   ▒▒ ░░░▒░ ░ ░ ░ ░░   ░ ▒░    ░   ",
+        f"  ░░   ░   ░   ▒    ░░░ ░ ░    ░   ░ ░   ░      ",
+        f"   ░           ░  ░   ░              ░           ",
+        "",
+        f"  RF Spectrum Monitor  {VERSION}",
+        f"  Author: Ihor Kolodyuk",
+        "",
+        f"  Device: {device.upper() if device else 'NOT FOUND'}",
+    ]
+    
+    if scan_num > 0:
+        lines.append(f"  Scanning #{scan_num}...")
+    else:
+        lines.append("  Initializing...")
+    
+    lines.append("")
+    lines.append("  github.com/ihorman/rflord")
+    
+    start_row = max(0, (h - len(lines)) // 2)
+    
+    for i, line in enumerate(lines):
+        row = start_row + i
+        if row >= h - 1:
+            break
+        try:
+            color = CP_HEADER if i < 10 else CP_OK if "v0." in line else CP_DIM
+            stdscr.addstr(row, max(0, (w - len(line)) // 2), line[:w-1], curses.color_pair(color) | curses.A_BOLD)
+        except:
+            pass
+    
+    stdscr.refresh()
+
 def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     stdscr.erase()
@@ -430,7 +476,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     row = 0
     
     # Header
-    header = f" RfLord {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
+    header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
     try:
         stdscr.addstr(row, 0, header[:w-1], curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
@@ -445,7 +491,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type          Ago Remark              "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type       Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
         stdscr.addstr(row, mid, " Freq  Pwr  Std  Dist Bnd ID"[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
@@ -481,7 +527,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
-            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {ago:>4} {remark}"
+            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -548,6 +594,10 @@ def main_curses(stdscr):
     
     ensure_sink()
     artemis_db = load_artemis()
+    
+    # Show splash while loading
+    draw_splash(stdscr, device)
+    time.sleep(1.5)
     
     bands = [
         (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
@@ -749,7 +799,7 @@ def main_ansi():
         sys.stdout.write("\033[H")
         
         # Header
-        print(f"{C} RfLord{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
+        print(f"{C} RfLord {VERSION}{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
               f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Author: Ihor Kolodyuk{N}")
         
         # Column titles
@@ -757,7 +807,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D} Freq    Pwr   Std  Dist Type         {N}{D} Freq    Pwr   Std  Dist Bnd  Identification    {N}")
+        print(f"{D} Freq    Pwr   Std  Dist Type       Last {N}{D} Freq    Pwr   Std  Dist Bnd  Identification    {N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
@@ -786,7 +836,7 @@ def main_ansi():
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
-                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {ago:>4} {remark}{N}"
+                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<9} {ago:>5} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
@@ -915,8 +965,14 @@ def time_ago(timestamp):
     if diff < 60:
         return f"{int(diff)}s"
     elif diff < 3600:
-        return f"{int(diff/60)}m"
+        m = int(diff / 60)
+        s = int(diff % 60)
+        return f"{m}m{s:02d}s" if s else f"{m}m"
     elif diff < 86400:
-        return f"{int(diff/3600)}h"
+        h = int(diff / 3600)
+        m = int((diff % 3600) / 60)
+        return f"{h}h{m:02d}m" if m else f"{h}h"
     else:
-        return f"{int(diff/86400)}d"
+        d = int(diff / 86400)
+        h = int((diff % 86400) / 3600)
+        return f"{d}d{h:02d}h" if h else f"{d}d"
