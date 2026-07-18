@@ -24,7 +24,7 @@ from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_ic
 
 # Config
 VERSION = "v0.5.25"
-INTERVAL = 120
+INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 VOICE_THRESHOLD = -15
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
