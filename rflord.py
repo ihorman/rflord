@@ -320,7 +320,7 @@ def play_voice_sample(freq_mhz):
 def get_signal_type(freq_mhz, bw, pmr, std):
     """Classify signal type for display."""
     if 230 <= freq_mhz <= 285:
-        if bw < 50000: return "DisplayPort"
+        if bw < 50000: return "Display Port"
         else: return "DP bursty"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
@@ -351,7 +351,7 @@ def get_signal_type(freq_mhz, bw, pmr, std):
 def format_row(freq, power, std, dist, band, sig_type, color, artemis_id=""):
     """Format a single table row."""
     art = f" {D}{artemis_id[:30]}{N}" if artemis_id else ""
-    return f"  {color}{freq:>7.1f}  {power:>+5.1f}  {std:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<11}{N}{art}"
+    return f"  {color}{freq:>7.1f}  {power:>+5.1f}  {std:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<13}{N}{art}"
 
 def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
     # Separate and sort
