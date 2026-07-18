@@ -599,7 +599,8 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
     if len(ok) > avail: extra += f" +{len(ok)-avail} ok"
     try:
-        stdscr.addstr(row, 0, f" Ctrl+C{extra}"[:w-1], curses.color_pair(CP_DIM))
+        keys = f" q:Quit  s:Scan  v:Voice  +/-:Interval({INTERVAL}s){extra}"
+        stdscr.addstr(row, 0, keys[:w-1], curses.color_pair(CP_DIM))
     except: pass
     
     stdscr.refresh()
@@ -748,7 +749,25 @@ def main_curses(stdscr, device):
                 dist = est_distance(f0, s0['peak'])
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
-        time.sleep(INTERVAL)
+        # Wait with key handling
+        stdscr.nodelay(True)
+        stdscr.timeout(1000)
+        wait_end = time.time() + INTERVAL
+        while time.time() < wait_end:
+            key = stdscr.getch()
+            if key == ord('q') or key == ord('Q'):
+                return
+            elif key == ord('+') or key == ord('='):
+                INTERVAL = min(600, INTERVAL + 30)
+            elif key == ord('-'):
+                INTERVAL = max(30, INTERVAL - 30)
+            elif key == ord('s') or key == ord('S'):
+                break
+            elif key == ord('v') or key == ord('V'):
+                sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
+                speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
