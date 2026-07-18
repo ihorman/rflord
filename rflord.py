@@ -715,6 +715,45 @@ def main_curses(stdscr, device):
         
         time.sleep(INTERVAL)
 
+# === LOGGING WITH WEEKLY ROTATION ===
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_DIR = "/home/ihorman/sdr_captures/rflord_logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+def setup_logger():
+    """Setup rotating logger — 1MB per file, 4 files max (~1 week)."""
+    logger = logging.getLogger('rflord')
+    logger.setLevel(logging.INFO)
+    
+    handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, 'rflord.log'),
+        maxBytes=1024*1024,
+        backupCount=4,
+        encoding='utf-8'
+    )
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+    logger.addHandler(handler)
+    return logger
+
+def cleanup_old_logs():
+    """Delete log files older than 7 days."""
+    import glob
+    cutoff = time.time() - (7 * 86400)
+    for f in glob.glob(os.path.join(LOG_DIR, '*')):
+        try:
+            if os.path.getmtime(f) < cutoff:
+                os.unlink(f)
+        except:
+            pass
+
+# Initialize logger
+log = setup_logger()
+
 def main():
     # Detect device BEFORE curses takes over terminal
     device = detect_device()
@@ -932,46 +971,6 @@ def main_ansi():
 
 if __name__ == "__main__":
     main()
-
-# === LOGGING WITH WEEKLY ROTATION ===
-import logging
-from logging.handlers import RotatingFileHandler
-
-LOG_DIR = "/home/ihorman/sdr_captures/rflord_logs"
-os.makedirs(LOG_DIR, exist_ok=True)
-
-def setup_logger():
-    """Setup rotating logger — 1MB per file, 4 files max (~1 week)."""
-    logger = logging.getLogger('rflord')
-    logger.setLevel(logging.INFO)
-    
-    # Rotating file handler: 1MB per file, keep 4 backups
-    handler = RotatingFileHandler(
-        os.path.join(LOG_DIR, 'rflord.log'),
-        maxBytes=1024*1024,  # 1MB
-        backupCount=4,       # Keep 4 old files
-        encoding='utf-8'
-    )
-    handler.setFormatter(logging.Formatter(
-        '%(asctime)s | %(levelname)s | %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    ))
-    logger.addHandler(handler)
-    return logger
-
-def cleanup_old_logs():
-    """Delete log files older than 7 days."""
-    import glob
-    cutoff = time.time() - (7 * 86400)
-    for f in glob.glob(os.path.join(LOG_DIR, '*')):
-        try:
-            if os.path.getmtime(f) < cutoff:
-                os.unlink(f)
-        except:
-            pass
-
-# Initialize logger
-log = setup_logger()
 
 def time_ago(timestamp):
     """Format timestamp as human-readable time ago."""
