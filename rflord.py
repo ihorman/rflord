@@ -196,13 +196,11 @@ def est_distance(freq_mhz, power_dbfs):
     fspl = max(20, min(160, fspl))
     d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
     d = max(0.001, min(500, d))
-    # Always show meters if < 1km for precision
+    # ALWAYS show meters when under 1km
     if d < 1.0:
         return f"{d*1000:.0f}m"
-    elif d < 10:
-        return f"{d:.1f}km"
     else:
-        return f"{d:.0f}km"
+        return f"{d*1000:.0f}m" if d < 10 else f"{d:.0f}km"
 
 def speak(text):
     try:
@@ -416,11 +414,17 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
           f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ "
           f"Sig {len(signals)} │ {D}Ihor Kolodyuk{N}          ")
     
-    # Column header — once
-    print(f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<11} Identification{N}")
+    # Column header
+    print(f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<13} Identification{N}")
+    
+    # Calculate max rows to fit terminal (24 lines total)
+    # Header=1, ColHeader=1, Footer=2 => 4 lines for data
+    # Leave 20 lines for signals (10 sus + delimiter + 9 known)
+    max_sus = min(len(suspicious), 8)
+    max_ok = min(len(ok), 7) if suspicious else min(len(ok), 15)
     
     # Suspicious (RED top 3, YELLOW rest)
-    for i, s in enumerate(suspicious[:10]):
+    for i, s in enumerate(suspicious[:max_sus]):
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
@@ -430,15 +434,15 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
         c = R if i < 3 else Y
         print(format_row(f, s['peak'], s['std'], dist, band, sig_type, c, art))
     
-    if len(suspicious) > 10:
-        print(f"  {D}  ... +{len(suspicious) - 10} more{N}")
+    if len(suspicious) > max_sus:
+        print(f"  {D}  ... +{len(suspicious) - max_sus} more{N}")
     
     # Delimiter
     if suspicious and ok:
         print(f"{D}  {'─' * 70}{N}")
     
-    # Known (GREEN top 10)
-    for s in ok[:10]:
+    # Known (GREEN)
+    for s in ok[:max_ok]:
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
@@ -446,9 +450,11 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
         art = art[:30] if art else ""
         print(format_row(f, s['peak'], s['std'], dist, band, "", G, art))
     
-    # Clear rest
+    # Footer — fixed 2 lines
     print(f"{D}  ──────────────────────────────────────────────────────────────────────────────{N}")
     print(f"{D}  Ctrl+C{N}")
+    
+    # Clear rest to prevent scroll
     sys.stdout.write("\033[J")
     sys.stdout.flush()
 
