@@ -536,14 +536,24 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             dist = est_distance(f, s['peak'])
             sig_type = get_signal_type(f, 0, 0, s["std"], artemis_db)
             icon = get_signal_icon(sig_type, f, s["std"])
-            # Check spy device
-            spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
-            if spy_name:
-                log.critical(f"SPY: {spy_name} at {f:.1f} MHz")
-                remark = spy_name
+            # Remark: prefer Artemis identification over spy_db
+            # Only use spy_db if signal type is unknown/suspicious
+            known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
+                           "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
+                           "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
+            art = identify_signal(f, artemis_db) if artemis_db else None
+            if art:
+                remark = art
+            elif sig_type not in known_types:
+                # Signal type unknown — check spy_db
+                spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
+                if spy_name:
+                    log.critical(f"SPY: {spy_name} at {f:.1f} MHz")
+                    remark = spy_name
+                else:
+                    remark = ""
             else:
-                art = identify_signal(f, artemis_db) if artemis_db else None
-                remark = art if art else ""
+                remark = ""
             # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(14)+sp+ago(5)+sp = 49 visible cells
             remark_w = max(12, mid - 51)
             remark = remark[:remark_w]
@@ -687,13 +697,13 @@ def main_curses(stdscr, device):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                    if spy_name:
-                        announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
+                    artemis_name = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_name:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
                     else:
-                        artemis_name = identify_signal(f, artemis_db)
-                        if artemis_name:
-                            announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                        spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                        if spy_name:
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
                         else:
                             announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 
@@ -916,13 +926,18 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                 icon = get_signal_icon(sig_type, f, s['std'])
-                # Check spy device
-                spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                if spy_name:
-                    remark = spy_name
+                # Remark: prefer Artemis identification over spy_db
+                known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
+                               "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
+                               "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
+                art = identify_signal(f, artemis_db) if artemis_db else None
+                if art:
+                    remark = art
+                elif sig_type not in known_types:
+                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                    remark = spy_name if spy_name else ""
                 else:
-                    art = identify_signal(f, artemis_db) if artemis_db else None
-                    remark = art if art else ""
+                    remark = ""
                 remark_w = max(12, mid - 51)
                 remark = remark[:remark_w]
                 c = R if i < 3 else Y
@@ -966,13 +981,13 @@ def main_ansi():
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                    if spy_name:
-                        announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
+                    artemis_name = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_name:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
                     else:
-                        artemis_name = identify_signal(f, artemis_db)
-                        if artemis_name:
-                            announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                        spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                        if spy_name:
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
                         else:
                             announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 voice_result = None
