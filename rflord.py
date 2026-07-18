@@ -196,10 +196,13 @@ def est_distance(freq_mhz, power_dbfs):
     fspl = max(20, min(160, fspl))
     d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
     d = max(0.001, min(500, d))
-    if d < 10:
-        return f"{d*1000:.0f}m"
+    meters = d * 1000
+    if meters < 1000:
+        return f"{meters:.0f}m"
+    elif meters < 10000:
+        return f"{meters/1000:.1f}km"
     else:
-        return f"{d:.0f}km"
+        return f"{meters/1000:.0f}km"
 
 def speak(text):
     """Speak text via edge-tts. No timeout — let it play fully."""
@@ -245,12 +248,17 @@ def load_artemis():
                         'name': parts[0].strip("'"),
                         'freq_low': freq_low,
                         'freq_high': freq_high,
+                        'modulation': parts[3] if len(parts) > 3 else '',
+                        'bandwidth': parts[4] if len(parts) > 4 else '',
+                        'country': parts[6] if len(parts) > 6 else '',
+                        'description': parts[8][:100] if len(parts) > 8 else '',
                     })
     except:
         pass
     return db
 
 def identify_signal(freq_mhz, artemis_db):
+    """Return best Artemis match. Returns dict with name, description, etc."""
     freq_hz = freq_mhz * 1e6
     best = None
     best_width = float('inf')
@@ -261,17 +269,15 @@ def identify_signal(freq_mhz, artemis_db):
             if width < best_width:
                 best_width = width
                 best = entry
-    if best:
-        return best['name']
-    return None
+    return best
 
 def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     """Classify signal type. Check Artemis first, then hardcoded rules."""
     # Check Artemis database FIRST
     if artemis_db:
-        art_name = identify_signal(freq_mhz, artemis_db)
-        if art_name:
-            return art_name[:9]
+        art_entry = identify_signal(freq_mhz, artemis_db)
+        if art_entry:
+            return art_entry['name'][:9]
     
     # Known real signals
     if 240 <= freq_mhz <= 242: return "DAB"
@@ -543,7 +549,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
                            "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
             art = identify_signal(f, artemis_db) if artemis_db else None
             if art:
-                remark = art
+                remark = art.get('description', '') or art.get('name', '')
             elif sig_type not in known_types:
                 # Signal type unknown — check spy_db
                 spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
@@ -574,7 +580,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             art = identify_signal(f, artemis_db) if artemis_db else None
             # Right table: freq(6)+sp+pwr(5)+sp+std(4)+sp+dist(5)+sp+band(4)+sp = 27 fixed
             id_w = max(15, (w - mid) - 28)
-            art_str = (art[:id_w] if art else "")
+            art_str = (art['name'][:id_w] if art else "")
             line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}"
             try:
                 stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
@@ -697,9 +703,9 @@ def main_curses(stdscr, device):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_name = identify_signal(f, artemis_db) if artemis_db else None
-                    if artemis_name:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_entry:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {dist}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
@@ -932,7 +938,7 @@ def main_ansi():
                                "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
                 art = identify_signal(f, artemis_db) if artemis_db else None
                 if art:
-                    remark = art
+                    remark = art.get('description', '') or art.get('name', '')
                 elif sig_type not in known_types:
                     spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                     remark = spy_name if spy_name else ""
@@ -951,7 +957,7 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 band = get_band(f)
                 art = identify_signal(f, artemis_db) if artemis_db else None
-                art_str = art[:25] if art else ""
+                art_str = art['name'][:25] if art else ""
                 right = f"{G}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}{N}"
             
             if left or right:
@@ -981,9 +987,9 @@ def main_ansi():
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_name = identify_signal(f, artemis_db) if artemis_db else None
-                    if artemis_name:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_entry:
+                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_entry['name']}, about {dist}")
                     else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
