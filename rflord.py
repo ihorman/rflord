@@ -560,7 +560,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     stdscr.refresh()
 
-def main_curses(stdscr):
+def main_curses(stdscr, device):
     global INTERVAL, VOICE_THRESHOLD
     
     # Setup curses
@@ -583,11 +583,6 @@ def main_curses(stdscr):
             INTERVAL = int(sys.argv[i + 2])
         if arg == "--threshold" and i + 2 <= len(sys.argv):
             VOICE_THRESHOLD = int(sys.argv[i + 2])
-    
-    device = detect_device()
-    if not device:
-        print("No SDR device found.")
-        sys.exit(1)
     
     ensure_sink()
     artemis_db = load_artemis()
@@ -704,10 +699,16 @@ def main_curses(stdscr):
         time.sleep(INTERVAL)
 
 def main():
+    # Detect device BEFORE curses takes over terminal
+    device = detect_device()
+    if not device:
+        print("No SDR device found.")
+        sys.exit(1)
+    
     # Try curses first (proper terminal), fallback to ANSI
     try:
         if sys.stdout.isatty():
-            curses.wrapper(main_curses)
+            curses.wrapper(main_curses, device)
         else:
             # Non-TTY: use ANSI mode
             main_ansi()
