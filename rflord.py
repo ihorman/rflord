@@ -320,8 +320,8 @@ def play_voice_sample(freq_mhz):
 def get_signal_type(freq_mhz, bw, pmr, std):
     """Classify signal type for display."""
     if 230 <= freq_mhz <= 285:
-        if bw < 50000: return "DisplPort"
-        else: return "DP-burst"
+        if bw < 50000: return "DisplayPort"
+        else: return "DP bursty"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
         else: return "USB-burst"
@@ -351,7 +351,7 @@ def get_signal_type(freq_mhz, bw, pmr, std):
 def format_row(freq, power, std, dist, band, sig_type, cw, status, color, artemis_id=""):
     """Format a single table row with fixed-width columns."""
     return (f"  {color}{freq:>8.1f}  {power:>+5.1f}  {std:>4.1f}  "
-            f"{dist:>6}  {band:>5}  {sig_type:>8}{cw:<2}  {status}  {artemis_id}{N}")
+            f"{dist:>6}  {band:>5}  {sig_type:>11}{cw:<2}  {status}  {artemis_id}{N}")
 
 def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
     # Separate signals
@@ -384,7 +384,7 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
     print(f"{C}  {'─' * 78}{N}")
     
     # Column header (fixed position)
-    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>8}  {'St':>2}  Identification")
+    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>11}  {'St':>2}  Identification")
     print(f"  {'─' * 90}")
     
     # Suspicious signals
