@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 rflord — RF Lord: Real-time RF spectrum monitor with drone detection and voice alerts.
-Run in any terminal: rflord [--interval 60]
+Uses curses for proper terminal display.
 Author: Ihor Kolodyuk
 """
 
@@ -12,77 +12,34 @@ os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 import subprocess
 import sys
-import os
 import time
 import math
 import tempfile
 import signal
+import shutil
+import glob
+import curses
 
-# ANSI colors
-R = "\033[1;31m"   # red (strongest only)
-Y = "\033[1;33m"   # yellow (medium)
-M = "\033[1;35m"   # magenta (drone)
-C = "\033[1;36m"   # cyan (header)
-G = "\033[1;32m"   # green (known)
-D = "\033[2m"      # dim
-B = "\033[1m"      # bold
-W = "\033[1;37m"   # white bold
-N = "\033[0m"      # reset
-BG = "\033[48;5;235m"  # dark background
-
+# Config
 INTERVAL = 120
 TTS_VOICE = "en-US-SteffanNeural"
-VOICE_THRESHOLD = -15  # dBFS — announce signals stronger than this
+VOICE_THRESHOLD = -15
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
+DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
+MAX_AGE_DAYS = 30
 
-def load_artemis():
-    """Load Artemis signal database."""
-    db = []
-    if not os.path.exists(ARTEMIS_DB):
-        return db
-    try:
-        with open(ARTEMIS_DB, 'r') as f:
-            for line in f:
-                parts = line.strip().split('*')
-                if len(parts) < 8:
-                    continue
-                try:
-                    freq_low = int(parts[1]) if parts[1] else 0
-                    freq_high = int(parts[2]) if parts[2] else 0
-                except:
-                    continue
-                if freq_low > 0 and freq_high > 0:
-                    db.append({
-                        'name': parts[0].strip("'"),
-                        'freq_low': freq_low,
-                        'freq_high': freq_high,
-                        'modulation': parts[3],
-                        'country': parts[6],
-                    })
-    except:
-        pass
-    return db
-
-def identify_signal(freq_mhz, artemis_db):
-    """Identify signal using Artemis database. Returns name or None."""
-    freq_hz = freq_mhz * 1e6
-    best = None
-    best_width = float('inf')
-    for entry in artemis_db:
-        tol = max((entry['freq_high'] - entry['freq_low']) * 0.1, 2_000_000)
-        if (entry['freq_low'] - tol) <= freq_hz <= (entry['freq_high'] + tol):
-            width = entry['freq_high'] - entry['freq_low']
-            if width < best_width:
-                best_width = width
-                best = entry
-    if best:
-        return best['name']
-    return None
+# Color pairs
+CP_HEADER = 1
+CP_SUS_RED = 2
+CP_SUS_YEL = 3
+CP_OK = 4
+CP_DIM = 5
+CP_SEP = 6
 
 def run_cmd(cmd, timeout=60):
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=timeout)
-        return r.stdout  # Ignore stderr to prevent table corruption
+        return r.stdout
     except:
         return ""
 
@@ -147,8 +104,8 @@ def get_band(f):
     bands = [
         (88, 108, "FM"), (108, 137, "AIR"), (144, 148, "2m"), (150, 174, "VHF"),
         (400, 470, "UHF"), (470, 608, "DTV"), (806, 960, "GSM"),
-        (960, 1215, "L-BAND"), (1700, 2000, "3G"), (2300, 2700, "LTE"),
-        (2400, 2500, "WiFi"), (5150, 5900, "5GHz"),
+        (960, 1215, "L"), (1700, 2000, "3G"), (2300, 2700, "LTE"),
+        (2400, 2500, "WiFi"), (5150, 5900, "5G"),
     ]
     for lo, hi, name in bands:
         if lo <= f <= hi:
@@ -196,11 +153,10 @@ def est_distance(freq_mhz, power_dbfs):
     fspl = max(20, min(160, fspl))
     d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
     d = max(0.001, min(500, d))
-    # ALWAYS show meters when under 1km
-    if d < 1.0:
+    if d < 10:
         return f"{d*1000:.0f}m"
     else:
-        return f"{d*1000:.0f}m" if d < 10 else f"{d:.0f}km"
+        return f"{d:.0f}km"
 
 def speak(text):
     try:
@@ -225,154 +181,61 @@ def ensure_sink():
     except:
         pass
 
-def clear():
-    # Hide cursor, move to top — no flash, just overwrite
-    sys.stdout.write("\033[?25l\033[H")
-    sys.stdout.flush()
-
-def try_voice_decode(freq_mhz):
-    """Try to decode voice at frequency. Records and plays FM/AM audio if voice band."""
+def load_artemis():
+    db = []
+    if not os.path.exists(ARTEMIS_DB):
+        return db
     try:
-        scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
-        cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
-        r = run_cmd(cmd, timeout=15)
-        
-        # If signal is in FM/AM voice band, record and play audio
-        is_voice_band = (88 <= freq_mhz <= 108) or (108 <= freq_mhz <= 137) or (150 <= freq_mhz <= 174) or (400 <= freq_mhz <= 470)
-        if is_voice_band:
-            play_voice_sample(freq_mhz)
-        
-        if "DMR" in r: return "DMR digital voice"
-        if "D-STAR" in r: return "D-STAR ham radio"
-        if "NFM" in r and "Power" in r:
-            if "Analog NFM" in r: return "FM voice radio"
-        if "AM" in r and "Air band" in r: return "AM aviation radio"
-        if "POCSAG" in r: return "POCSAG pager"
-        if "DTMF" in r: return "DTMF tones"
-        if "Morse" in r: return "Morse code"
+        with open(ARTEMIS_DB, 'r') as f:
+            for line in f:
+                parts = line.strip().split('*')
+                if len(parts) < 8:
+                    continue
+                try:
+                    freq_low = int(parts[1]) if parts[1] else 0
+                    freq_high = int(parts[2]) if parts[2] else 0
+                except:
+                    continue
+                if freq_low > 0 and freq_high > 0:
+                    db.append({
+                        'name': parts[0].strip("'"),
+                        'freq_low': freq_low,
+                        'freq_high': freq_high,
+                    })
     except:
         pass
+    return db
+
+def identify_signal(freq_mhz, artemis_db):
+    freq_hz = freq_mhz * 1e6
+    best = None
+    best_width = float('inf')
+    for entry in artemis_db:
+        tol = max((entry['freq_high'] - entry['freq_low']) * 0.1, 2_000_000)
+        if (entry['freq_low'] - tol) <= freq_hz <= (entry['freq_high'] + tol):
+            width = entry['freq_high'] - entry['freq_low']
+            if width < best_width:
+                best_width = width
+                best = entry
+    if best:
+        return best['name']
     return None
 
-# Decoded audio/video storage
-DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
-MAX_AGE_DAYS = 30
-
-def ensure_decoded_dir():
-    """Create decoded storage directory."""
-    os.makedirs(DECODED_DIR, exist_ok=True)
-    os.makedirs(os.path.join(DECODED_DIR, "audio"), exist_ok=True)
-    os.makedirs(os.path.join(DECODED_DIR, "video"), exist_ok=True)
-
-def cleanup_old_decoded():
-    """Delete decoded files older than MAX_AGE_DAYS."""
-    import glob
-    cutoff = time.time() - (MAX_AGE_DAYS * 86400)
-    for subdir in ["audio", "video"]:
-        path = os.path.join(DECODED_DIR, subdir, "*")
-        for f in glob.glob(path):
-            try:
-                if os.path.getmtime(f) < cutoff:
-                    os.unlink(f)
-            except:
-                pass
-
-def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
-    """Save decoded audio WAV to persistent storage."""
-    try:
-        ensure_decoded_dir()
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
-        name = f"{ts}_{freq_label}MHz_{sig_type}.wav"
-        dest = os.path.join(DECODED_DIR, "audio", name)
-        import shutil
-        shutil.copy2(wav_path, dest)
-        return dest
-    except:
-        return None
-
-def play_voice_sample(freq_mhz):
-    """Record IQ at frequency, demodulate to audio, play and save it."""
-    try:
-        freq_hz = int(freq_mhz * 1e6)
-        raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
-        wav = tempfile.mktemp(suffix='.wav', prefix='voice_')
-        
-        # Capture IQ (2 seconds)
-        subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
-                        "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
-                       capture_output=True, timeout=10)
-        
-        if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
-            return
-        
-        # Demodulate
-        import numpy as np
-        data = np.fromfile(raw, dtype=np.int8)
-        iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
-        iq /= 128.0
-        os.unlink(raw)
-        
-        if 88 <= freq_mhz <= 108:
-            # FM broadcast — wide FM with de-emphasis
-            phase = np.unwrap(np.angle(iq))
-            audio = np.diff(phase) * 2000000 / (2 * np.pi)
-            alpha = 1.0 / (1.0 + 2000000 * 75e-6)
-            for i in range(1, len(audio)):
-                audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
-        else:
-            phase = np.unwrap(np.angle(iq))
-            audio = np.diff(phase) * 2000000 / (2 * np.pi)
-        
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.8
-        
-        # Resample to 48kHz
-        import wave
-        target_rate = 48000
-        src_rate = 2000000
-        step = src_rate / target_rate
-        indices = np.arange(0, len(audio), step).astype(int)
-        indices = indices[indices < len(audio)]
-        audio_48k = audio[indices]
-        
-        # Write WAV
-        audio_16 = (audio_48k * 32767).astype(np.int16)
-        with wave.open(wav, 'w') as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(target_rate)
-            w.writeframes(audio_16.tobytes())
-        
-        # Save to persistent storage (1 month retention)
-        sig_type = get_signal_type(freq_mhz, 0, 0, 0)
-        saved = save_decoded_audio(freq_mhz, wav, sig_type)
-        
-        # Play
-        ensure_sink()
-        subprocess.run(["paplay", wav], capture_output=True, timeout=10)
-        os.unlink(wav)
-    except Exception:
-        pass
-
 def get_signal_type(freq_mhz, bw, pmr, std):
-    """Classify signal type for display."""
     if 230 <= freq_mhz <= 285:
-        if bw < 50000: return "Display Port"
-        else: return "Display Port"
+        return "Display Port"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
         else: return "USB-burst"
     elif 240 <= freq_mhz <= 242: return "DAB"
     elif 390 <= freq_mhz <= 400: return "TETRA"
     elif 337 <= freq_mhz <= 362: return "Keyfob"
-    # Military / encrypted
     elif 140 <= freq_mhz <= 150 and std < 2:
         return "Mil/Enc"
     elif 150 <= freq_mhz <= 174 and std < 2:
         return "Mil/Enc"
     elif 300 <= freq_mhz <= 330:
         return "Mil/Enc"
-    # Hidden camera / spy tool bands
     elif 900 <= freq_mhz <= 928 and std < 2:
         return "CAM?"
     elif 1080 <= freq_mhz <= 1300 and std < 2:
@@ -392,12 +255,102 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     elif pmr > 4: return "Bursty"
     else: return "Analog"
 
-def format_row(freq, power, std, dist, band, sig_type, color, artemis_id=""):
-    """Format a single table row."""
-    art = f" {D}{artemis_id[:30]}{N}" if artemis_id else ""
-    return f"  {color}{freq:>7.1f}  {power:>+5.1f}  {std:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<13}{N}{art}"
+def ensure_decoded_dir():
+    os.makedirs(os.path.join(DECODED_DIR, "audio"), exist_ok=True)
+    os.makedirs(os.path.join(DECODED_DIR, "video"), exist_ok=True)
 
-def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
+def cleanup_old_decoded():
+    cutoff = time.time() - (MAX_AGE_DAYS * 86400)
+    for subdir in ["audio", "video"]:
+        for f in glob.glob(os.path.join(DECODED_DIR, subdir, "*")):
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    os.unlink(f)
+            except:
+                pass
+
+def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
+    try:
+        ensure_decoded_dir()
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
+        name = f"{ts}_{freq_label}MHz_{sig_type}.wav"
+        dest = os.path.join(DECODED_DIR, "audio", name)
+        shutil.copy2(wav_path, dest)
+        return dest
+    except:
+        return None
+
+def play_voice_sample(freq_mhz):
+    try:
+        freq_hz = int(freq_mhz * 1e6)
+        raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
+        wav = tempfile.mktemp(suffix='.wav', prefix='voice_')
+        subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
+                        "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
+                       capture_output=True, timeout=10)
+        if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
+            return
+        import numpy as np
+        data = np.fromfile(raw, dtype=np.int8)
+        iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
+        iq /= 128.0
+        os.unlink(raw)
+        if 88 <= freq_mhz <= 108:
+            phase = np.unwrap(np.angle(iq))
+            audio = np.diff(phase) * 2000000 / (2 * np.pi)
+            alpha = 1.0 / (1.0 + 2000000 * 75e-6)
+            for i in range(1, len(audio)):
+                audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
+        else:
+            phase = np.unwrap(np.angle(iq))
+            audio = np.diff(phase) * 2000000 / (2 * np.pi)
+        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.8
+        import wave
+        target_rate = 48000
+        step = 2000000 / target_rate
+        indices = np.arange(0, len(audio), step).astype(int)
+        indices = indices[indices < len(audio)]
+        audio_48k = audio[indices]
+        audio_16 = (audio_48k * 32767).astype(np.int16)
+        with wave.open(wav, 'w') as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(target_rate)
+            w.writeframes(audio_16.tobytes())
+        sig_type = get_signal_type(freq_mhz, 0, 0, 0)
+        save_decoded_audio(freq_mhz, wav, sig_type)
+        ensure_sink()
+        subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        os.unlink(wav)
+    except:
+        pass
+
+def try_voice_decode(freq_mhz):
+    try:
+        scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
+        cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
+        r = run_cmd(cmd, timeout=15)
+        is_voice_band = (88 <= freq_mhz <= 108) or (108 <= freq_mhz <= 137) or (150 <= freq_mhz <= 174) or (400 <= freq_mhz <= 470)
+        if is_voice_band:
+            play_voice_sample(freq_mhz)
+        if "DMR" in r: return "DMR digital voice"
+        if "D-STAR" in r: return "D-STAR ham radio"
+        if "NFM" in r and "Power" in r:
+            if "Analog NFM" in r: return "FM voice radio"
+        if "AM" in r and "Air band" in r: return "AM aviation radio"
+        if "POCSAG" in r: return "POCSAG pager"
+        if "DTMF" in r: return "DTMF tones"
+        if "Morse" in r: return "Morse code"
+    except:
+        pass
+    return None
+
+def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
+    """Draw the table using curses — pixel-perfect alignment."""
+    stdscr.erase()
+    h, w = stdscr.getmaxyx()
+    
     # Separate and sort
     suspicious = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'],
                         key=lambda x: x['peak'], reverse=True)
@@ -405,61 +358,108 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
                 key=lambda x: x['peak'], reverse=True)
     
     elapsed = int(time.time() - start_time)
-    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+    uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
-    sys.stdout.write("\033[H")
+    row = 0
     
-    # One-line header
-    print(f"{C}  RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {h:02d}:{m:02d}:{s:02d} │ "
-          f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ "
-          f"Sig {len(signals)} │ {D}Ihor Kolodyuk{N}          ")
+    # Header
+    header = f"  RF LORD {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Ihor Kolodyuk"
+    try:
+        stdscr.addstr(row, 0, header[:w-1], curses.color_pair(CP_HEADER) | curses.A_BOLD)
+    except:
+        pass
+    row += 1
     
     # Column header
-    print(f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<13} Identification{N}")
+    col_hdr = f"  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<13} Identification"
+    try:
+        stdscr.addstr(row, 0, col_hdr[:w-1], curses.color_pair(CP_DIM))
+    except:
+        pass
+    row += 1
     
-    # Calculate max rows to fit terminal (24 lines total)
-    # Header=1, ColHeader=1, Footer=2 => 4 lines for data
-    # Leave 20 lines for signals (10 sus + delimiter + 9 known)
-    max_sus = min(len(suspicious), 8)
-    max_ok = min(len(ok), 7) if suspicious else min(len(ok), 15)
-    
-    # Suspicious (RED top 3, YELLOW rest)
+    # Suspicious
+    max_sus = min(len(suspicious), max(1, h - row - 12))
     for i, s in enumerate(suspicious[:max_sus]):
+        if row >= h - 4:
+            break
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
         sig_type = get_signal_type(f, 0, 0, s['std'])
         art = identify_signal(f, artemis_db) if artemis_db else None
-        art = art[:30] if art else ""
-        c = R if i < 3 else Y
-        print(format_row(f, s['peak'], s['std'], dist, band, sig_type, c, art))
+        art_str = f" {art[:30]}" if art else ""
+        cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
+        line = f"  {f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<13}{art_str}"
+        try:
+            stdscr.addstr(row, 0, line[:w-1], curses.color_pair(cp))
+        except:
+            pass
+        row += 1
     
     if len(suspicious) > max_sus:
-        print(f"  {D}  ... +{len(suspicious) - max_sus} more{N}")
+        try:
+            stdscr.addstr(row, 0, f"  ... +{len(suspicious) - max_sus} more", curses.color_pair(CP_DIM))
+        except:
+            pass
+        row += 1
     
     # Delimiter
-    if suspicious and ok:
-        print(f"{D}  {'─' * 70}{N}")
+    if suspicious and ok and row < h - 3:
+        try:
+            stdscr.addstr(row, 0, f"  {'─' * min(70, w-3)}", curses.color_pair(CP_SEP))
+        except:
+            pass
+        row += 1
     
-    # Known (GREEN)
+    # Known
+    max_ok = min(len(ok), max(1, h - row - 3))
     for s in ok[:max_ok]:
+        if row >= h - 3:
+            break
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
         art = identify_signal(f, artemis_db) if artemis_db else None
-        art = art[:30] if art else ""
-        print(format_row(f, s['peak'], s['std'], dist, band, "", G, art))
+        art_str = f" {art[:30]}" if art else ""
+        line = f"  {f:>7.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>5}  {band:>4}  {'':<13}{art_str}"
+        try:
+            stdscr.addstr(row, 0, line[:w-1], curses.color_pair(CP_OK))
+        except:
+            pass
+        row += 1
     
-    # Footer — fixed 2 lines
-    print(f"{D}  ──────────────────────────────────────────────────────────────────────────────{N}")
-    print(f"{D}  Ctrl+C{N}")
+    # Footer
+    if row < h:
+        try:
+            stdscr.addstr(row, 0, f"  {'─' * min(70, w-3)}", curses.color_pair(CP_SEP))
+        except:
+            pass
+        row += 1
+    if row < h:
+        try:
+            stdscr.addstr(row, 0, "  Ctrl+C to stop", curses.color_pair(CP_DIM))
+        except:
+            pass
     
-    # Clear rest to prevent scroll
-    sys.stdout.write("\033[J")
-    sys.stdout.flush()
+    stdscr.refresh()
 
-def main():
+def main_curses(stdscr):
     global INTERVAL, VOICE_THRESHOLD
+    
+    # Setup curses
+    curses.curs_set(0)
+    curses.start_color()
+    curses.use_default_colors()
+    curses.init_pair(CP_HEADER, curses.COLOR_CYAN, -1)
+    curses.init_pair(CP_SUS_RED, curses.COLOR_RED, -1)
+    curses.init_pair(CP_SUS_YEL, curses.COLOR_YELLOW, -1)
+    curses.init_pair(CP_OK, curses.COLOR_GREEN, -1)
+    curses.init_pair(CP_DIM, curses.COLOR_WHITE, -1)
+    curses.init_pair(CP_SEP, curses.COLOR_WHITE, -1)
+    
+    stdscr.nodelay(False)
+    stdscr.timeout(-1)
     
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--interval" and i + 2 <= len(sys.argv):
@@ -469,7 +469,7 @@ def main():
     
     device = detect_device()
     if not device:
-        print("No SDR device found. Connect HackRF or enable RTL-SDR.")
+        print("No SDR device found.")
         sys.exit(1)
     
     ensure_sink()
@@ -485,11 +485,6 @@ def main():
     known_freqs = set()
     alert_count = 0
     start_time = time.time()
-    
-    signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h"), sys.stdout.write("\033[H\033[J"), print(f"\n{C}Stopped after {scan_num} scans, {alert_count} alerts.{N}"), sys.exit(0)))
-    
-    # Print initial header once
-    print(f"\033[2J\033[H", end="")
     
     while True:
         scan_num += 1
@@ -512,7 +507,6 @@ def main():
                 seen[key] = s
         unique = list(seen.values())
         
-        # Find new suspicious
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
@@ -522,41 +516,34 @@ def main():
                     new_suspicious.append(s)
                     alert_count += 1
         
-        print_table(unique, start_time, known_freqs, alert_count, artemis_db)
+        draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
         
-        # Cleanup old decoded files (once per scan)
         if scan_num % 10 == 0:
             cleanup_old_decoded()
         
-        # Voice alert — announce all new signals above threshold
+        # Voice alert
         if new_suspicious:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
-            
-            # Filter signals above threshold
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
             
             if above_threshold:
-                # Build announcement for each signal above threshold
                 announcements = []
-                for s in above_threshold[:4]:  # Max 4 signals to keep it brief
+                for s in above_threshold[:4]:
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'])
-                    # Check Artemis for identification
                     artemis_name = identify_signal(f, artemis_db)
                     if artemis_name:
                         announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
                     else:
                         announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 
-                # Try voice decode on strongest narrowband signal
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
                         voice_result = try_voice_decode(s['freq'] / 1e6)
                         break
                 
-                # Also try decode on Analog-type signals (play audio sample)
                 for s in above_threshold:
                     f = s['freq'] / 1e6
                     sig_type = get_signal_type(f, 0, 0, s['std'])
@@ -581,13 +568,15 @@ def main():
                 
                 speak(msg)
             else:
-                # Signals below threshold — brief announcement
                 s0 = new_suspicious[0]
                 f0 = s0['freq'] / 1e6
                 dist = est_distance(f0, s0['peak'])
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
         time.sleep(INTERVAL)
+
+def main():
+    curses.wrapper(main_curses)
 
 if __name__ == "__main__":
     main()
