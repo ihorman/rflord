@@ -26,6 +26,7 @@ from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_ic
 VERSION = "v0.5.25"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
+HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
 VOICE_THRESHOLD = -15
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
 DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
@@ -248,15 +249,19 @@ def in_legitimate_band(freq_mhz):
     return False
 
 def speak(text):
-    """Speak text via edge-tts. No timeout — let it play fully."""
+    """Speak text via edge-tts with HAL 9000 effect. No timeout — let it play fully."""
     try:
-        wav = tempfile.mktemp(suffix='.mp3', prefix='tts_')
-        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", "+10%",
-                        "--text", text, "--write-media", wav],
+        raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
+        out = tempfile.mktemp(suffix='.wav', prefix='hal_')
+        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", "-15%",
+                        "--text", text, "--write-media", raw],
                        capture_output=True, timeout=60)
-        if os.path.exists(wav):
-            subprocess.run(["paplay", wav], capture_output=True, timeout=120)
-            os.unlink(wav)
+        if os.path.exists(raw):
+            subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
+            os.unlink(raw)
+            if os.path.exists(out):
+                subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                os.unlink(out)
     except:
         pass
 
@@ -512,6 +517,10 @@ def draw_splash(stdscr, device, status_lines=None):
                 color = CP_OK
                 col = max(0, (w - len(line)) // 2)
                 stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
+            elif "in progress" in line:
+                color = CP_SUS_RED
+                col = max(0, (w - len(line)) // 2)
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
             elif "Monitor" in line:
                 color = CP_HEADER
                 col = max(0, (w - len(line)) // 2)
@@ -708,6 +717,7 @@ def main_curses(stdscr, device):
     except: drone_count = 0
     total = db_count + spy_count + drone_count
     status.append(f"Signatures databases loaded: OK ({total} total: {db_count} Artemis, {spy_count} spy, {drone_count} drone)")
+    status.append("Initial scan & analysis: in progress")
     draw_splash(stdscr, device, status)
     
     bands = [
@@ -727,10 +737,7 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
-    status.append("Initial scan started: OK")
-    draw_splash(stdscr, device, status)
-    time.sleep(1)
-    
+    first_scan_done = False
     while True:
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
@@ -777,6 +784,15 @@ def main_curses(stdscr, device):
             last_seen[key] = now  # Update every scan
         
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs)
+        
+        # Update splash status after first scan
+        if not first_scan_done:
+            first_scan_done = True
+            # Replace "in progress" with "OK"
+            for i, s in enumerate(status):
+                if "in progress" in s:
+                    status[i] = s.replace("in progress", "OK")
+                    break
         
         if scan_num % 10 == 0:
             cleanup_old_decoded()

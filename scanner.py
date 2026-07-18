@@ -36,19 +36,24 @@ except Exception:
 # Sound alerts — voice announcements via edge-tts
 import tempfile
 TTS_VOICE = "en-US-SteffanNeural"
-TTS_RATE = "+10%"
+TTS_RATE = "-15%"
+HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
 
 def speak(text):
-    """Speak text using edge-tts and play via paplay."""
+    """Speak text using edge-tts with HAL 9000 effect."""
     try:
-        wav = tempfile.mktemp(suffix='.mp3', prefix='scan_tts_')
+        raw = tempfile.mktemp(suffix='.mp3', prefix='scan_tts_')
+        out = tempfile.mktemp(suffix='.wav', prefix='hal_')
         subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate", TTS_RATE,
-                        "--text", text, "--write-media", wav],
+                        "--text", text, "--write-media", raw],
                        capture_output=True, timeout=10)
-        if os.path.exists(wav):
-            _ensure_audio_sink()
-            subprocess.run(["paplay", wav], capture_output=True, timeout=15)
-            os.unlink(wav)
+        if os.path.exists(raw):
+            subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=15)
+            os.unlink(raw)
+            if os.path.exists(out):
+                _ensure_audio_sink()
+                subprocess.run(["paplay", out], capture_output=True, timeout=15)
+                os.unlink(out)
     except Exception:
         pass
 
