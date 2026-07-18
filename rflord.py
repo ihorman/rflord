@@ -407,7 +407,7 @@ def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
     sys.stdout.flush()
 
 def main():
-    global INTERVAL
+    global INTERVAL, VOICE_THRESHOLD
     
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--interval" and i + 2 <= len(sys.argv):
