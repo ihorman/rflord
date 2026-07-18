@@ -544,13 +544,14 @@ def main_curses(stdscr):
     alert_count = 0
     start_time = time.time()
     
+    # Reset HackRF once at startup
+    if device == "hackrf":
+        subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+        time.sleep(3)
+
     while True:
         scan_num += 1
         
-        if device == "hackrf":
-            subprocess.run(["sudo", "usbreset", "1d50:6089"],
-                           capture_output=True, timeout=5)
-            time.sleep(2)
         
         all_signals = []
         for f_lo, f_hi, bw, n in bands:
@@ -678,13 +679,15 @@ def main_ansi():
     
     signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h\033[H\033[J"), print(f"\n{C}Stopped.{N}"), sys.exit(0)))
     print("\033[2J\033[H\033[?25l", end="")
+    # Reset HackRF once at startup
+    if device == "hackrf":
+        subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+        time.sleep(3)
+
     
     while True:
         scan_num += 1
         
-        if device == "hackrf":
-            subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
-            time.sleep(2)
         
         all_signals = []
         for f_lo, f_hi, bw, n in bands:
