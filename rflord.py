@@ -19,6 +19,7 @@ import signal
 import shutil
 import glob
 import curses
+from spy_db import identify_spy_device, get_signal_icon, get_threat_icon
 
 # Config
 INTERVAL = 120
@@ -467,8 +468,16 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             sig_type = get_signal_type(f, 0, 0, s["std"], artemis_db)
+            icon = get_signal_icon(sig_type, f, s["std"])
+            # Check spy device
+            spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
+            if spy_name:
+                remark = spy_name[:18]
+            else:
+                art = identify_signal(f, artemis_db) if artemis_db else None
+                remark = art[:18] if art else ""
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
-            line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}"
+            line = f"{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -594,11 +603,15 @@ def main_curses(stdscr):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_name = identify_signal(f, artemis_db)
-                    if artemis_name:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                    if spy_name:
+                        announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
                     else:
-                        announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                        artemis_name = identify_signal(f, artemis_db)
+                        if artemis_name:
+                            announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                        else:
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 
                 voice_result = None
                 for s in above_threshold:
@@ -752,8 +765,16 @@ def main_ansi():
                 f = s['freq'] / 1e6
                 dist = est_distance(f, s['peak'])
                 sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                icon = get_signal_icon(sig_type, f, s['std'])
+                # Check spy device
+                spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                if spy_name:
+                    remark = spy_name[:18]
+                else:
+                    art = identify_signal(f, artemis_db) if artemis_db else None
+                    remark = art[:18] if art else ""
                 c = R if i < 3 else Y
-                left = f"{c}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<13}{N}"
+                left = f"{c}{icon}{f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<11} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
@@ -790,11 +811,15 @@ def main_ansi():
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_name = identify_signal(f, artemis_db)
-                    if artemis_name:
-                        announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                    if spy_name:
+                        announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {dist}")
                     else:
-                        announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                        artemis_name = identify_signal(f, artemis_db)
+                        if artemis_name:
+                            announcements.append(f"{f:.0f} megahertz, identified as {artemis_name}, about {dist}")
+                        else:
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
