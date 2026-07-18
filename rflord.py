@@ -429,8 +429,8 @@ def signal_priority(freq_mhz, std):
     # Priority 2: Other suspicious (USB noise, Display Port, etc.)
     return 2
 
-def draw_splash(stdscr, device, scan_num=0):
-    """Show loading splash with version info."""
+def draw_splash(stdscr, device, status_lines=None):
+    """Show loading splash with version info and status."""
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
@@ -444,10 +444,9 @@ def draw_splash(stdscr, device, scan_num=0):
         f"Device: {device.upper() if device else 'NOT FOUND'}",
     ]
     
-    if scan_num > 0:
-        lines.append(f"Scanning #{scan_num}...")
-    else:
-        lines.append("Scanning...")
+    if status_lines:
+        lines.append("")
+        lines.extend(status_lines)
     
     lines.append("")
     lines.append("github.com/ihorman/rflord")
@@ -462,8 +461,16 @@ def draw_splash(stdscr, device, scan_num=0):
             if line == "RFLORD":
                 color = CP_SUS_RED
                 stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
+            elif ": OK" in line:
+                color = CP_OK
+                col = max(0, (w - len(line)) // 2)
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
+            elif "Monitor" in line:
+                color = CP_HEADER
+                col = max(0, (w - len(line)) // 2)
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
             else:
-                color = CP_HEADER if "Monitor" in line else CP_DIM
+                color = CP_DIM
                 col = max(0, (w - len(line)) // 2)
                 stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
         except:
@@ -506,7 +513,8 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     # Sub-headers
     try:
         stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type       Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
-        stdscr.addstr(row, mid, " Freq  Pwr  Std  Dist Bnd ID"[:w-mid-1], curses.color_pair(CP_DIM))
+        rhdr = f" {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}"
+        stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
     
@@ -601,11 +609,15 @@ def main_curses(stdscr, device):
         if arg == "--threshold" and i + 2 <= len(sys.argv):
             VOICE_THRESHOLD = int(sys.argv[i + 2])
     
+    status = ["SDR Initialized: OK"]
+    draw_splash(stdscr, device, status)
+    
     ensure_sink()
     artemis_db = load_artemis()
     
-    # Show splash while loading
-    draw_splash(stdscr, device)
+    db_count = len(artemis_db) if artemis_db else 0
+    status.append(f"Signatures databases loaded: OK ({db_count} entries)")
+    draw_splash(stdscr, device, status)
     
     bands = [
         (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
@@ -623,6 +635,10 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
+    status.append("Initial scan started: OK")
+    draw_splash(stdscr, device, status)
+    time.sleep(1)
+    
     while True:
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
@@ -878,7 +894,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D} Freq    Pwr   Std  Dist Type       Last {N}{D} Freq    Pwr   Std  Dist Bnd  Identification    {N}")
+        print(f"{D} Freq    Pwr   Std  Dist Type       Last {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
