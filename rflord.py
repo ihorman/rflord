@@ -724,6 +724,7 @@ def main_curses(stdscr, device):
     curses.curs_set(0)
     curses.start_color()
     curses.use_default_colors()
+    stdscr.keypad(True)  # Enable arrow/function keys
     # Bright colors — use bold attribute for maximum brightness
     curses.init_pair(CP_HEADER, curses.COLOR_CYAN, -1)
     curses.init_pair(CP_SUS_RED, curses.COLOR_RED, -1)
