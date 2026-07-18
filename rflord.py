@@ -388,13 +388,33 @@ def try_voice_decode(freq_mhz):
         pass
     return None
 
+def signal_priority(freq_mhz, std):
+    """Lower number = higher priority. Military/spy/FPV get priority."""
+    f = freq_mhz
+    # Priority 1: Military/encrypted
+    if 140 <= f <= 150: return 0
+    if 225 <= f <= 400: return 0  # Link-11
+    if 243 <= f <= 244: return 0  # Milstar
+    if 264 <= f <= 266: return 0  # Gonets
+    if 300 <= f <= 330: return 0
+    # Priority 2: Spy cameras / FPV
+    if 900 <= f <= 928 and std < 2: return 1
+    if 1080 <= f <= 1300 and std < 2: return 1
+    if 1200 <= f <= 1400 and std < 2: return 1
+    if 5725 <= f <= 5875 and std < 2: return 1
+    if 2410 <= f <= 2483 and std < 2: return 1
+    # Priority 3: Other suspicious (USB noise, Display Port, etc.)
+    return 2
+
 def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
-    suspicious = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'],
-                        key=lambda x: x['peak'], reverse=True)
+    suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
+                        key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
+
+
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) != 'sus'],
                 key=lambda x: x['peak'], reverse=True)
     
@@ -677,12 +697,10 @@ def main_ansi():
             key = round(s['freq'] / 1e6)
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
-        unique = list(seen.values())
-        
-        suspicious = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'],
-                            key=lambda x: x['peak'], reverse=True)
-        ok = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) != 'sus'],
-                    key=lambda x: x['peak'], reverse=True)
+        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) == "sus"],
+                            key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
+
+
         
         new_suspicious = []
         for s in unique:
