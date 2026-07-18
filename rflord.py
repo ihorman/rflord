@@ -150,9 +150,13 @@ def est_distance(freq_mhz, power_dbfs):
     fspl = max(20, min(160, fspl))
     d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
     d = max(0.001, min(500, d))
-    if d < 0.1: return f"{d*1000:.0f}m"
-    elif d < 2: return f"{d:.1f}km"
-    else: return f"{d:.0f}km"
+    # Always show meters if < 1km for precision
+    if d < 1.0:
+        return f"{d*1000:.0f}m"
+    elif d < 10:
+        return f"{d:.1f}km"
+    else:
+        return f"{d:.0f}km"
 
 def speak(text):
     try:
@@ -278,17 +282,32 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     elif 240 <= freq_mhz <= 242: return "DAB"
     elif 390 <= freq_mhz <= 400: return "TETRA"
     elif 337 <= freq_mhz <= 362: return "Keyfob"
-    elif 5150 <= freq_mhz <= 5900: return "WiFi/FPV"
-    elif 2400 <= freq_mhz <= 2500: return "WiFi/BT"
+    # Hidden camera / spy tool bands
+    elif 900 <= freq_mhz <= 928 and std < 2:
+        return "CAM?"
+    elif 1080 <= freq_mhz <= 1300 and std < 2:
+        return "SPY-CAM"
+    elif 2410 <= freq_mhz <= 2483 and std < 2 and bw and bw < 100000:
+        return "CAM?"
+    elif 5725 <= freq_mhz <= 5875 and std < 2:
+        return "FPV?"
+    elif 5150 <= freq_mhz <= 5900:
+        return "WiFi/FPV"
+    elif 2400 <= freq_mhz <= 2500:
+        return "WiFi/BT"
+    elif 1200 <= freq_mhz <= 1400 and std < 2:
+        return "SPY-CAM"
     elif std < 2: return "CW"
     elif pmr > 8: return "Digital"
     elif pmr > 4: return "Bursty"
     else: return "Analog"
 
-def print_table(signals, scan_num, known_freqs, alert_count):
-    clear()
-    now = time.strftime("%H:%M:%S")
-    
+def format_row(freq, power, std, dist, band, sig_type, cw, status, color):
+    """Format a single table row with fixed-width columns."""
+    return (f"  {color}{freq:>8.1f}  {power:>+5.1f}  {std:>4.1f}  "
+            f"{dist:>6}  {band:>5}  {sig_type:>8}{cw:<2}  {status}{N}")
+
+def print_table(signals, start_time, known_freqs, alert_count):
     # Separate signals
     all_suspicious = []
     all_ok = []
@@ -304,64 +323,71 @@ def print_table(signals, scan_num, known_freqs, alert_count):
     all_suspicious.sort(key=lambda x: x['peak'], reverse=True)
     all_ok.sort(key=lambda x: x['peak'], reverse=True)
     
-    # Header
-    print(f"{C}┌──────────────────────────────────────────────────────────────────────────────┐{N}")
-    print(f"{C}│{N}  {B}📡 RF MONITOR{N}  {C}│{N} Scan #{scan_num}  {C}│{N} {now}  {C}│{N} Alerts: {Y}{alert_count}{N}  {C}│{N} Tracked: {len(known_freqs)} {C}│{N}")
-    print(f"{C}│{N}  {D}Author: Ihor Kolodyuk{N}                                              {C}│{N}")
-    print(f"{C}└──────────────────────────────────────────────────────────────────────────────┘{N}")
-    print()
+    # Calculate uptime
+    elapsed = int(time.time() - start_time)
+    h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
+    uptime = f"{h:02d}:{m:02d}:{s:02d}"
+    now = time.strftime("%H:%M:%S")
     
-    # Suspicious signals — color gradient by power
+    # Move cursor to top — don't clear header area
+    sys.stdout.write("\033[H")
+    sys.stdout.flush()
+    
+    # Compact header — only update values, not structure
+    print(f"{C}  RF LORD │{N} {now} │ Uptime: {uptime} │ {Y}Alerts: {alert_count}{N} │ Tracked: {len(known_freqs)} │ Signals: {len(signals)} │ by Ihor Kolodyuk")
+    print(f"{C}  {'─' * 78}{N}")
+    
+    # Column header (fixed position)
+    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>8}  {'St':>2}")
+    print(f"  {'─' * 78}")
+    
+    # Suspicious signals
+    row = 0
     if all_suspicious:
-        # Top 3 in RED (strongest), rest in YELLOW
         top3 = all_suspicious[:3]
-        rest = all_suspicious[3:15]
-        
-        print(f"  {W}SUSPICIOUS SIGNALS{N}")
-        print(f"  {D}────────────────────────────────────────────────────────────────────────────{N}")
-        print(f"  {D}  {'Freq':>9}  {'Pwr':>6}  {'Std':>4}  {'Dist':>7}  {'Band':>5}  {'Type':>8}  {'CW':>2}  {'St':>3}{N}")
-        print(f"  {D}────────────────────────────────────────────────────────────────────────────{N}")
+        rest = all_suspicious[3:12]
         
         for s in top3:
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             band = get_band(f)
-            cw = " ⚡" if s['std'] < 2 else ""
-            new = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
+            cw = "⚡" if s['std'] < 2 else " "
+            st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
             sig_type = get_signal_type(f, 0, 0, s['std'])
-            print(f"  {R}  {f:>9.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>7}  {band:>5}  {sig_type:>8}{cw:>3}  {new}{N}")
+            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, R))
+            row += 1
         
         for s in rest:
             f = s['freq'] / 1e6
             dist = est_distance(f, s['peak'])
             band = get_band(f)
-            cw = " ⚡" if s['std'] < 2 else ""
-            new = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
+            cw = "⚡" if s['std'] < 2 else " "
+            st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
             sig_type = get_signal_type(f, 0, 0, s['std'])
-            print(f"  {Y}  {f:>9.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>7}  {band:>5}  {sig_type:>8}{cw:>3}  {new}{N}")
+            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, Y))
+            row += 1
         
-        if len(all_suspicious) > 15:
-            print(f"  {D}  ... and {len(all_suspicious) - 15} more{N}")
-        print()
+        if len(all_suspicious) > 12:
+            print(f"  {D}  ... +{len(all_suspicious) - 12} more{N}")
+            row += 1
     
-    # Known signals — top 10 strongest in GREEN
-    if all_ok:
-        print(f"  {G}STRONGEST KNOWN SIGNALS{N}")
-        print(f"  {D}────────────────────────────────────────────────────────────────────────────{N}")
-        print(f"  {D}  {'Freq':>9}  {'Pwr':>6}  {'Std':>4}  {'Dist':>7}  {'Band':>5}{N}")
-        print(f"  {D}────────────────────────────────────────────────────────────────────────────{N}")
-        for s in all_ok[:10]:
-            f = s['freq'] / 1e6
-            dist = est_distance(f, s['peak'])
-            band = get_band(f)
-            print(f"  {G}  {f:>9.1f}  {s['peak']:>+5.1f}  {s['std']:>4.1f}  {dist:>7}  {band:>5}{N}")
-        print()
+    # Separator
+    print(f"  {D}{'─' * 78}{N}")
+    row += 1
     
-    # Summary
-    total = len(signals)
-    print(f"  {C}────────────────────────────────────────────────────────────────────────────{N}")
-    print(f"  {D}Total: {total}  │  {G}Known: {len(all_ok)}{N}  │  {Y}Suspicious: {len(all_suspicious)}{N}  │  Next: {INTERVAL}s  │  Ctrl+C to stop{N}")
-    # Clear remaining lines below (remove leftover from previous render)
+    # Known signals — top 10
+    for s in all_ok[:10]:
+        f = s['freq'] / 1e6
+        dist = est_distance(f, s['peak'])
+        band = get_band(f)
+        print(format_row(f, s['peak'], s['std'], dist, band, "", "", "", G))
+        row += 1
+    
+    # Fill remaining rows with blank to prevent leftover
+    print(f"  {D}{'─' * 78}{N}")
+    print(f"  {D}Ctrl+C to stop{N}")
+    
+    # Clear everything below
     sys.stdout.write("\033[J")
     sys.stdout.flush()
 
@@ -388,8 +414,12 @@ def main():
     scan_num = 0
     known_freqs = set()
     alert_count = 0
+    start_time = time.time()
     
-    signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h"), clear(), print(f"\n{C}Stopped after {scan_num} scans, {alert_count} alerts.{N}"), sys.exit(0)))
+    signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h"), sys.stdout.write("\033[H\033[J"), print(f"\n{C}Stopped after {scan_num} scans, {alert_count} alerts.{N}"), sys.exit(0)))
+    
+    # Print initial header once
+    print(f"\033[2J\033[H", end="")
     
     while True:
         scan_num += 1
@@ -422,7 +452,7 @@ def main():
                     new_suspicious.append(s)
                     alert_count += 1
         
-        print_table(unique, scan_num, known_freqs, alert_count)
+        print_table(unique, start_time, known_freqs, alert_count)
         
         # Voice alert with signal type and voice decode
         if new_suspicious:
@@ -432,9 +462,8 @@ def main():
             dist = est_distance(f0, s0['peak'])
             sig_type = get_signal_type(f0, 0, 0, s0['std'])
             
-            # Try voice decode on strongest new signal
             voice_result = None
-            if s0['std'] < 6:  # Narrowband — could be voice
+            if s0['std'] < 6:
                 voice_result = try_voice_decode(f0)
             
             if voice_result:
