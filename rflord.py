@@ -348,98 +348,61 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     elif pmr > 4: return "Bursty"
     else: return "Analog"
 
-def format_row(freq, power, std, dist, band, sig_type, cw, status, color, artemis_id=""):
-    """Format a single table row with fixed-width columns."""
-    return (f"  {color}{freq:>8.1f}  {power:>+5.1f}  {std:>4.1f}  "
-            f"{dist:>6}  {band:>5}  {sig_type:>11}{cw:<2}  {status}  {artemis_id}{N}")
+def format_row(freq, power, std, dist, band, sig_type, color, artemis_id=""):
+    """Format a single table row."""
+    art = f" {D}{artemis_id[:30]}{N}" if artemis_id else ""
+    return f"  {color}{freq:>7.1f}  {power:>+5.1f}  {std:>4.1f}  {dist:>5}  {band:>4}  {sig_type:<11}{N}{art}"
 
 def print_table(signals, start_time, known_freqs, alert_count, artemis_db=None):
-    # Separate signals
-    all_suspicious = []
-    all_ok = []
-    for sig in signals:
-        f = sig['freq'] / 1e6
-        cls = classify(f, sig['peak'], sig['std'])
-        if cls == "sus":
-            all_suspicious.append(sig)
-        else:
-            all_ok.append(sig)
+    # Separate and sort
+    suspicious = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'],
+                        key=lambda x: x['peak'], reverse=True)
+    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) != 'sus'],
+                key=lambda x: x['peak'], reverse=True)
     
-    # Sort by power (strongest first)
-    all_suspicious.sort(key=lambda x: x['peak'], reverse=True)
-    all_ok.sort(key=lambda x: x['peak'], reverse=True)
-    
-    # Calculate uptime
     elapsed = int(time.time() - start_time)
     h, m, s = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
-    uptime = f"{h:02d}:{m:02d}:{s:02d}"
-    now = time.strftime("%H:%M:%S")
     
-    # Move cursor to top — don't clear header area
     sys.stdout.write("\033[H")
-    sys.stdout.flush()
     
-    # Compact header — only update values, not structure
-    print(f"{C}  RF LORD │{N} {now} │ Uptime: {uptime} │ {Y}Alerts: {alert_count}{N} │ Tracked: {len(known_freqs)} │ Signals: {len(signals)} │ by Ihor Kolodyuk")
-    print(f"{C}  {'─' * 78}{N}")
+    # One-line header
+    print(f"{C}  RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {h:02d}:{m:02d}:{s:02d} │ "
+          f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ "
+          f"Sig {len(signals)} │ {D}Ihor Kolodyuk{N}          ")
     
-    # Column header (fixed position)
-    print(f"  {'Freq':>8}  {'Pwr':>5}  {'Std':>4}  {'Dist':>6}  {'Band':>5}  {'Type':>11}  {'St':>2}  Identification")
-    print(f"  {'─' * 90}")
+    # Column header — once
+    print(f"{D}  {'Freq':>7}  {'Pwr':>5}  {'Std':>4}  {'Dist':>5}  {'Bnd':>4}  {'Type':<11} Identification{N}")
     
-    # Suspicious signals
-    row = 0
-    if all_suspicious:
-        top3 = all_suspicious[:3]
-        rest = all_suspicious[3:12]
-        
-        for s in top3:
-            f = s['freq'] / 1e6
-            dist = est_distance(f, s['peak'])
-            band = get_band(f)
-            cw = "⚡" if s['std'] < 2 else " "
-            st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
-            sig_type = get_signal_type(f, 0, 0, s['std'])
-            artemis_id = identify_signal(f, artemis_db) if artemis_db else None
-            artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
-            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, R, artemis_str))
-            row += 1
-        
-        for s in rest:
-            f = s['freq'] / 1e6
-            dist = est_distance(f, s['peak'])
-            band = get_band(f)
-            cw = "⚡" if s['std'] < 2 else " "
-            st = f"{Y}NEW{N}" if round(f) not in known_freqs else f"{D} —{N}"
-            sig_type = get_signal_type(f, 0, 0, s['std'])
-            artemis_id = identify_signal(f, artemis_db) if artemis_db else None
-            artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
-            print(format_row(f, s['peak'], s['std'], dist, band, sig_type, cw, st, Y, artemis_str))
-            row += 1
-        
-        if len(all_suspicious) > 12:
-            print(f"  {D}  ... +{len(all_suspicious) - 12} more{N}")
-            row += 1
-    
-    # Separator
-    print(f"  {D}{'─' * 78}{N}")
-    row += 1
-    
-    # Known signals — top 10
-    for s in all_ok[:10]:
+    # Suspicious (RED top 3, YELLOW rest)
+    for i, s in enumerate(suspicious[:10]):
         f = s['freq'] / 1e6
         dist = est_distance(f, s['peak'])
         band = get_band(f)
-        artemis_id = identify_signal(f, artemis_db) if artemis_db else None
-        artemis_str = f"{D}{artemis_id[:35]}{N}" if artemis_id else ""
-        print(format_row(f, s['peak'], s['std'], dist, band, "", "", "", G, artemis_str))
-        row += 1
+        sig_type = get_signal_type(f, 0, 0, s['std'])
+        art = identify_signal(f, artemis_db) if artemis_db else None
+        art = art[:30] if art else ""
+        c = R if i < 3 else Y
+        print(format_row(f, s['peak'], s['std'], dist, band, sig_type, c, art))
     
-    # Fill remaining rows with blank to prevent leftover
-    print(f"  {D}{'─' * 78}{N}")
-    print(f"  {D}Ctrl+C to stop{N}")
+    if len(suspicious) > 10:
+        print(f"  {D}  ... +{len(suspicious) - 10} more{N}")
     
-    # Clear everything below
+    # Delimiter
+    if suspicious and ok:
+        print(f"{D}  {'─' * 70}{N}")
+    
+    # Known (GREEN top 10)
+    for s in ok[:10]:
+        f = s['freq'] / 1e6
+        dist = est_distance(f, s['peak'])
+        band = get_band(f)
+        art = identify_signal(f, artemis_db) if artemis_db else None
+        art = art[:30] if art else ""
+        print(format_row(f, s['peak'], s['std'], dist, band, "", G, art))
+    
+    # Clear rest
+    print(f"{D}  ──────────────────────────────────────────────────────────────────────────────{N}")
+    print(f"{D}  Ctrl+C{N}")
     sys.stdout.write("\033[J")
     sys.stdout.flush()
 
