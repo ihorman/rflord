@@ -140,11 +140,13 @@ def classify(f, power, std):
         return "ok"
     
     # SUSPICIOUS — military, spy, FPV, unknown transmitters
-    if 225 <= f <= 400:  # Link-11, military UHF
+    if 255 <= f <= 267:  # Link-11 UHF, Gonets
+        return "sus"
+    if 270 <= f <= 285:  # Link-11 UHF
         return "sus"
     if 243 <= f <= 244:  # Milstar
         return "sus"
-    if 264 <= f <= 266:  # Gonets
+
         return "sus"
     if 140 <= f <= 150:  # Military CW
         return "sus"
@@ -391,19 +393,20 @@ def try_voice_decode(freq_mhz):
 def signal_priority(freq_mhz, std):
     """Lower number = higher priority. Military/spy/FPV get priority."""
     f = freq_mhz
-    # Priority 1: Military/encrypted
-    if 140 <= f <= 150: return 0
-    if 225 <= f <= 400: return 0  # Link-11
-    if 243 <= f <= 244: return 0  # Milstar
-    if 264 <= f <= 266: return 0  # Gonets
-    if 300 <= f <= 330: return 0
-    # Priority 2: Spy cameras / FPV
+    # Priority 0: Military/encrypted — specific frequencies only
+    if 140 <= f <= 150: return 0   # Kiwi, military CW
+    if 243 <= f <= 244: return 0   # Milstar
+    if 255 <= f <= 267: return 0   # Link-11 UHF, Gonets
+    if 270 <= f <= 285: return 0   # Link-11 UHF
+    if 300 <= f <= 330: return 0   # Military UHF
+    if 380 <= f <= 400: return 0   # Tetrapol, TETRA
+    # Priority 1: Spy cameras / FPV
     if 900 <= f <= 928 and std < 2: return 1
     if 1080 <= f <= 1300 and std < 2: return 1
     if 1200 <= f <= 1400 and std < 2: return 1
     if 5725 <= f <= 5875 and std < 2: return 1
     if 2410 <= f <= 2483 and std < 2: return 1
-    # Priority 3: Other suspicious (USB noise, Display Port, etc.)
+    # Priority 2: Other suspicious (USB noise, Display Port, etc.)
     return 2
 
 def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db):
