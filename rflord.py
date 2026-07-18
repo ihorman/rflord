@@ -51,7 +51,7 @@ def detect_device():
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         import serial
         switched = False
-        for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
+        for port in ["/dev/ttyACM0", "/dev/ttyACM1"]:
             try:
                 print(f"  Trying {port}...", flush=True)
                 s = serial.Serial(port, 115200, timeout=2)
@@ -60,24 +60,22 @@ def detect_device():
                 time.sleep(1.5)
                 s.read(s.in_waiting or 500)
                 s.write(b'hackrf\r\n')
-                time.sleep(4)
+                time.sleep(3)
+                s.read(s.in_waiting or 500)
                 s.close()
                 switched = True
                 print(f"  Sent mode switch on {port}", flush=True)
                 break
             except Exception as e:
                 print(f"  {port} failed: {e}", flush=True)
-        # Force USB re-enumerate
-        run_cmd("sudo usbreset 1d50:6018")
-        time.sleep(3)
+        # Wait for USB re-enumeration (no usbreset — device does it itself)
+        time.sleep(5)
         lsusb = run_cmd("lsusb")
         if "1d50:6089" in lsusb:
             print("  Switched to HackRF mode!", flush=True)
         elif switched:
-            print("  Mode switch sent but HackRF not detected yet, waiting...", flush=True)
+            print("  Mode switch sent but HackRF not detected, retrying...", flush=True)
             time.sleep(5)
-            run_cmd("sudo usbreset 1d50:6089")
-            time.sleep(2)
             lsusb = run_cmd("lsusb")
     if "1d50:6089" in lsusb:
         return "hackrf"
