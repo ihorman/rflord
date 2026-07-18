@@ -32,6 +32,7 @@ BG = "\033[48;5;235m"  # dark background
 
 INTERVAL = 120
 TTS_VOICE = "en-US-SteffanNeural"
+VOICE_THRESHOLD = -15  # dBFS — announce signals stronger than this
 
 def run_cmd(cmd, timeout=60):
     try:
@@ -274,11 +275,11 @@ def play_voice_sample(freq_mhz):
 def get_signal_type(freq_mhz, bw, pmr, std):
     """Classify signal type for display."""
     if 230 <= freq_mhz <= 285:
-        if bw < 50000: return "DP/USB"
-        else: return "DP-bursty"
+        if bw < 50000: return "DisplPort"
+        else: return "DP-burst"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
-        else: return "USB-bursty"
+        else: return "USB-burst"
     elif 240 <= freq_mhz <= 242: return "DAB"
     elif 390 <= freq_mhz <= 400: return "TETRA"
     elif 337 <= freq_mhz <= 362: return "Keyfob"
@@ -397,6 +398,8 @@ def main():
     for i, arg in enumerate(sys.argv[1:]):
         if arg == "--interval" and i + 2 <= len(sys.argv):
             INTERVAL = int(sys.argv[i + 2])
+        if arg == "--threshold" and i + 2 <= len(sys.argv):
+            VOICE_THRESHOLD = int(sys.argv[i + 2])
     
     device = detect_device()
     if not device:
@@ -454,22 +457,49 @@ def main():
         
         print_table(unique, start_time, known_freqs, alert_count)
         
-        # Voice alert with signal type and voice decode
+        # Voice alert — announce all new signals above threshold
         if new_suspicious:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
-            s0 = new_suspicious[0]
-            f0 = s0['freq'] / 1e6
-            dist = est_distance(f0, s0['peak'])
-            sig_type = get_signal_type(f0, 0, 0, s0['std'])
             
-            voice_result = None
-            if s0['std'] < 6:
-                voice_result = try_voice_decode(f0)
+            # Filter signals above threshold
+            above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
             
-            if voice_result:
-                speak(f"{len(new_suspicious)} new signals. Strongest at {f0:.0f} megahertz, about {dist} away. Detected {voice_result}.")
+            if above_threshold:
+                # Build announcement for each signal above threshold
+                announcements = []
+                for s in above_threshold[:4]:  # Max 4 signals to keep it brief
+                    f = s['freq'] / 1e6
+                    dist = est_distance(f, s['peak'])
+                    sig_type = get_signal_type(f, 0, 0, s['std'])
+                    announcements.append(f"{f:.0f} megahertz, {sig_type}, about {dist}")
+                
+                # Try voice decode on strongest narrowband signal
+                voice_result = None
+                for s in above_threshold:
+                    if s['std'] < 6:
+                        voice_result = try_voice_decode(s['freq'] / 1e6)
+                        break
+                
+                count = len(above_threshold)
+                if count == 1:
+                    msg = f"Alert. New signal at {announcements[0]}."
+                elif count == 2:
+                    msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                else:
+                    msg = f"Alert. {count} new signals above threshold. Strongest at {announcements[0]}."
+                    if count > 2:
+                        msg += f" Also at {announcements[1]}."
+                
+                if voice_result:
+                    msg += f" Detected {voice_result}."
+                
+                speak(msg)
             else:
-                speak(f"{len(new_suspicious)} new signals. Strongest at {f0:.0f} megahertz, about {dist} away. Signal type: {sig_type}.")
+                # Signals below threshold — brief announcement
+                s0 = new_suspicious[0]
+                f0 = s0['freq'] / 1e6
+                dist = est_distance(f0, s0['peak'])
+                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
         
         time.sleep(INTERVAL)
 
