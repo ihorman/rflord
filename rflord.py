@@ -419,25 +419,21 @@ def draw_splash(stdscr, device, scan_num=0):
     
     lines = [
         "",
-        "  ____  _____ _     ___  ____  ",
-        " |  _ \\|  ___| |   / _ \\/ ___| ",
-        " | |_) | |_  | |  | | | \\___ \\ ",
-        " |  _ <|  _| | |__| |_| |___) |",
-        " |_| \\_\\_|   |____|\\___/|____/ ",
+        "RFLORD",
         "",
-        f"  RF Spectrum Monitor  {VERSION}",
-        f"  Author: Ihor Kolodyuk",
+        f"RF Spectrum Monitor  {VERSION}",
+        f"Author: Ihor Kolodyuk",
         "",
-        f"  Device: {device.upper() if device else 'NOT FOUND'}",
+        f"Device: {device.upper() if device else 'NOT FOUND'}",
     ]
     
     if scan_num > 0:
-        lines.append(f"  Scanning #{scan_num}...")
+        lines.append(f"Scanning #{scan_num}...")
     else:
-        lines.append("  Initializing...")
+        lines.append("Scanning...")
     
     lines.append("")
-    lines.append("  github.com/ihorman/rflord")
+    lines.append("github.com/ihorman/rflord")
     
     start_row = max(0, (h - len(lines)) // 2)
     
@@ -446,9 +442,13 @@ def draw_splash(stdscr, device, scan_num=0):
         if row >= h - 1:
             break
         try:
-            color = CP_HEADER if i < 6 else CP_OK if VERSION in line else CP_DIM
-            col = max(0, (w - len(line)) // 2)
-            stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
+            if line == "RFLORD":
+                color = CP_SUS_RED
+                stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
+            else:
+                color = CP_HEADER if "Monitor" in line else CP_DIM
+                col = max(0, (w - len(line)) // 2)
+                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
         except:
             pass
     
@@ -594,7 +594,6 @@ def main_curses(stdscr):
     
     # Show splash while loading
     draw_splash(stdscr, device)
-    time.sleep(1.5)
     
     bands = [
         (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
