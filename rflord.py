@@ -426,7 +426,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
-    mid = w // 2
+    mid = int(w * 0.6)
     row = 0
     
     # Header
@@ -445,8 +445,8 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type          Ago Remark"[:mid-1], curses.color_pair(CP_DIM))
-        stdscr.addstr(row, mid, " Freq    Pwr   Std  Dist Bnd  Identification    "[:w-mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type          Ago Remark              "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, mid, " Freq  Pwr  Std  Dist Bnd ID"[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
     
@@ -493,7 +493,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             dist = est_distance(f, s['peak'])
             band = get_band(f)
             art = identify_signal(f, artemis_db) if artemis_db else None
-            art_str = (art[:18] if art else "")
+            art_str = (art[:15] if art else "")
             line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}"
             try:
                 stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
@@ -753,7 +753,7 @@ def main_ansi():
               f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Author: Ihor Kolodyuk{N}")
         
         # Column titles
-        mid = 42
+        mid = 50
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
@@ -794,7 +794,7 @@ def main_ansi():
                 dist = est_distance(f, s['peak'])
                 band = get_band(f)
                 art = identify_signal(f, artemis_db) if artemis_db else None
-                art_str = art[:18] if art else ""
+                art_str = art[:15] if art else ""
                 right = f"{G}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}{N}"
             
             if left or right:
