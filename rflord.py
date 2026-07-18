@@ -572,6 +572,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     if known_freqs is None:
         known_freqs = {}
+    stdscr.clear()  # Clear entire screen to remove splash artifacts
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
