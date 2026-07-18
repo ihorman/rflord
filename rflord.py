@@ -256,8 +256,45 @@ def try_voice_decode(freq_mhz):
         pass
     return None
 
+# Decoded audio/video storage
+DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
+MAX_AGE_DAYS = 30
+
+def ensure_decoded_dir():
+    """Create decoded storage directory."""
+    os.makedirs(DECODED_DIR, exist_ok=True)
+    os.makedirs(os.path.join(DECODED_DIR, "audio"), exist_ok=True)
+    os.makedirs(os.path.join(DECODED_DIR, "video"), exist_ok=True)
+
+def cleanup_old_decoded():
+    """Delete decoded files older than MAX_AGE_DAYS."""
+    import glob
+    cutoff = time.time() - (MAX_AGE_DAYS * 86400)
+    for subdir in ["audio", "video"]:
+        path = os.path.join(DECODED_DIR, subdir, "*")
+        for f in glob.glob(path):
+            try:
+                if os.path.getmtime(f) < cutoff:
+                    os.unlink(f)
+            except:
+                pass
+
+def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
+    """Save decoded audio WAV to persistent storage."""
+    try:
+        ensure_decoded_dir()
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
+        name = f"{ts}_{freq_label}MHz_{sig_type}.wav"
+        dest = os.path.join(DECODED_DIR, "audio", name)
+        import shutil
+        shutil.copy2(wav_path, dest)
+        return dest
+    except:
+        return None
+
 def play_voice_sample(freq_mhz):
-    """Record IQ at frequency, demodulate to audio, and play it."""
+    """Record IQ at frequency, demodulate to audio, play and save it."""
     try:
         freq_hz = int(freq_mhz * 1e6)
         raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
@@ -282,12 +319,10 @@ def play_voice_sample(freq_mhz):
             # FM broadcast — wide FM with de-emphasis
             phase = np.unwrap(np.angle(iq))
             audio = np.diff(phase) * 2000000 / (2 * np.pi)
-            # De-emphasis filter (75μs)
             alpha = 1.0 / (1.0 + 2000000 * 75e-6)
             for i in range(1, len(audio)):
                 audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
         else:
-            # Narrow FM (PMR, air band AM, etc.)
             phase = np.unwrap(np.angle(iq))
             audio = np.diff(phase) * 2000000 / (2 * np.pi)
         
@@ -309,6 +344,10 @@ def play_voice_sample(freq_mhz):
             w.setsampwidth(2)
             w.setframerate(target_rate)
             w.writeframes(audio_16.tobytes())
+        
+        # Save to persistent storage (1 month retention)
+        sig_type = get_signal_type(freq_mhz, 0, 0, 0)
+        saved = save_decoded_audio(freq_mhz, wav, sig_type)
         
         # Play
         ensure_sink()
@@ -479,6 +518,10 @@ def main():
         
         print_table(unique, start_time, known_freqs, alert_count, artemis_db)
         
+        # Cleanup old decoded files (once per scan)
+        if scan_num % 10 == 0:
+            cleanup_old_decoded()
+        
         # Voice alert — announce all new signals above threshold
         if new_suspicious:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
@@ -514,7 +557,7 @@ def main():
                     if sig_type == "Analog" and s['std'] < 4:
                         play_voice_sample(f)
                         if not voice_result:
-                            voice_result = "analog voice sample"
+                            voice_result = "analog voice sample, saved to decoded folder"
                         break
                 
                 count = len(above_threshold)
