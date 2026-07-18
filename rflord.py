@@ -587,7 +587,7 @@ def main_curses(stdscr):
                 if round(f) not in known_freqs:
                     known_freqs.add(round(f))
                     new_suspicious.append(s)
-                    log.warning(f"SUSPICIOUS: {f:.1f} MHz, {s["peak"]:.1f} dBFS, std={s["std"]:.1f}")
+                    log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f" % (f, s["peak"], s["std"]))
                     alert_count += 1
         
         draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
