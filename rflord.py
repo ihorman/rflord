@@ -321,7 +321,7 @@ def get_signal_type(freq_mhz, bw, pmr, std):
     """Classify signal type for display."""
     if 230 <= freq_mhz <= 285:
         if bw < 50000: return "Display Port"
-        else: return "DP bursty"
+        else: return "Display Port"
     elif 612 <= freq_mhz <= 700:
         if bw < 10000: return "USB-noise"
         else: return "USB-burst"
