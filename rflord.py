@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import math
+import numpy as np
 import tempfile
 import signal
 import shutil
@@ -211,6 +212,39 @@ def speak_distance(dist_str):
     elif dist_str.endswith('m'):
         return dist_str.replace('m', ' meters')
     return dist_str
+
+def estimate_noise_floor(signals):
+    """Estimate noise floor using 10th percentile of signal powers.
+    From sec0ps/rf_surveillance — dynamic noise floor adapts to environment."""
+    if not signals:
+        return -70  # Default
+    powers = [s['peak'] for s in signals]
+    return float(np.percentile(powers, 10)) if len(powers) > 5 else -70
+
+def detect_active_probes(signals, noise_floor):
+    """Detect strong brief signals that might be direction-finding probes.
+    From sec0ps/rf_surveillance — threshold: >-20 dBm, >30 dB above noise floor."""
+    probes = []
+    threshold = max(-20, noise_floor + 30)  # -20 dBm OR 30 dB above noise
+    for s in signals:
+        if s['peak'] > threshold:
+            probes.append(s)
+    return probes
+
+# Legitimate bands to skip for probe detection (reduce false positives)
+LEGITIMATE_BANDS = [
+    (88, 108),    # FM Broadcast
+    (118, 137),   # Aviation
+    (162, 174),   # Weather/Emergency
+    (470, 890),   # TV/Cellular
+]
+
+def in_legitimate_band(freq_mhz):
+    """Check if frequency is in a known legitimate band."""
+    for lo, hi in LEGITIMATE_BANDS:
+        if lo <= freq_mhz <= hi:
+            return True
+    return False
 
 def speak(text):
     """Speak text via edge-tts. No timeout — let it play fully."""
@@ -693,6 +727,17 @@ def main_curses(stdscr, device):
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
+        
+        # Detect active probes (direction-finding signals)
+        noise_floor = estimate_noise_floor(unique)
+        probes = detect_active_probes(unique, noise_floor)
+        for p in probes:
+            f = p['freq'] / 1e6
+            if not in_legitimate_band(f):
+                log.warning(f"ACTIVE PROBE: {f:.1f} MHz, peak={p['peak']:.1f} dBFS, noise_floor={noise_floor:.1f}")
+                if round(f) not in known_freqs:
+                    known_freqs[round(f)] = time.time()
+                    alert_count += 1
         
         new_suspicious = []
         for s in unique:
