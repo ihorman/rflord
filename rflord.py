@@ -277,7 +277,7 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if artemis_db:
         art_entry = identify_signal(freq_mhz, artemis_db)
         if art_entry:
-            return art_entry['name'][:9]
+            return art_entry['name'][:18]
     
     # Known real signals
     if 240 <= freq_mhz <= 242: return "DAB"
@@ -516,7 +516,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type           Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " Freq    Pwr   Std  Dist Type               Last Remark              "[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
@@ -560,13 +560,13 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
                     remark = ""
             else:
                 remark = ""
-            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(14)+sp+ago(5)+sp = 49 visible cells
-            remark_w = max(12, mid - 51)
+            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(18)+sp+ago(5)+sp = 53 visible cells
+            remark_w = max(12, mid - 55)
             remark = remark[:remark_w]
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
-            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<14} {ago:>5} {remark}"
+            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -913,7 +913,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D} Freq    Pwr   Std  Dist Type           Last {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
+        print(f"{D} Freq    Pwr   Std  Dist Type               Last {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
@@ -944,12 +944,12 @@ def main_ansi():
                     remark = spy_name if spy_name else ""
                 else:
                     remark = ""
-                remark_w = max(12, mid - 51)
+                remark_w = max(12, mid - 55)
                 remark = remark[:remark_w]
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
-                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<14} {ago:>5} {remark}{N}"
+                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
             
             if i < len(ok):
                 s = ok[i]
