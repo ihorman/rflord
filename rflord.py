@@ -364,6 +364,7 @@ def play_voice_sample(freq_mhz):
             w.setframerate(target_rate)
             w.writeframes(audio_16.tobytes())
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
+        log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}")
         save_decoded_audio(freq_mhz, wav, sig_type)
         ensure_sink()
         subprocess.run(["paplay", wav], capture_output=True, timeout=10)
@@ -472,6 +473,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             # Check spy device
             spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
             if spy_name:
+                log.critical(f"SPY: {spy_name} at {f:.1f} MHz")
                 remark = spy_name[:18]
             else:
                 art = identify_signal(f, artemis_db) if artemis_db else None
@@ -585,12 +587,14 @@ def main_curses(stdscr):
                 if round(f) not in known_freqs:
                     known_freqs.add(round(f))
                     new_suspicious.append(s)
+                    log.warning(f"SUSPICIOUS: {f:.1f} MHz, {s["peak"]:.1f} dBFS, std={s["std"]:.1f}")
                     alert_count += 1
         
         draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
         
         if scan_num % 10 == 0:
             cleanup_old_decoded()
+            cleanup_old_logs()
         
         # Voice alert
         if new_suspicious:
@@ -800,6 +804,7 @@ def main_ansi():
         
         if scan_num % 10 == 0:
             cleanup_old_decoded()
+            cleanup_old_logs()
         
         # Voice alert (same as curses version)
         if new_suspicious:
@@ -855,3 +860,43 @@ def main_ansi():
 
 if __name__ == "__main__":
     main()
+
+# === LOGGING WITH WEEKLY ROTATION ===
+import logging
+from logging.handlers import RotatingFileHandler
+
+LOG_DIR = "/home/ihorman/sdr_captures/rflord_logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
+def setup_logger():
+    """Setup rotating logger — 1MB per file, 4 files max (~1 week)."""
+    logger = logging.getLogger('rflord')
+    logger.setLevel(logging.INFO)
+    
+    # Rotating file handler: 1MB per file, keep 4 backups
+    handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, 'rflord.log'),
+        maxBytes=1024*1024,  # 1MB
+        backupCount=4,       # Keep 4 old files
+        encoding='utf-8'
+    )
+    handler.setFormatter(logging.Formatter(
+        '%(asctime)s | %(levelname)s | %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    ))
+    logger.addHandler(handler)
+    return logger
+
+def cleanup_old_logs():
+    """Delete log files older than 7 days."""
+    import glob
+    cutoff = time.time() - (7 * 86400)
+    for f in glob.glob(os.path.join(LOG_DIR, '*')):
+        try:
+            if os.path.getmtime(f) < cutoff:
+                os.unlink(f)
+        except:
+            pass
+
+# Initialize logger
+log = setup_logger()
