@@ -38,6 +38,7 @@ CP_SUS_YEL = 3
 CP_OK = 4
 CP_DIM = 5
 CP_SEP = 6
+CP_FRESH = 7
 
 def run_cmd(cmd, timeout=60):
     try:
@@ -608,9 +609,17 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
             cp = CP_SUS_RED if i < 3 else CP_SUS_YEL
             seen_time = known_freqs.get(round(f), time.time())
             ago = time_ago(seen_time)
+            # Fresh detection blink: signal seen < 30s ago, toggle every 1s
+            age = time.time() - seen_time
+            is_fresh = age < 30
+            blink_on = is_fresh and int(time.time() * 2) % 2 == 0  # 0.5s on, 0.5s off
             line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}"
             try:
-                stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
+                if is_fresh:
+                    attr = curses.color_pair(CP_FRESH) | (curses.A_BOLD if blink_on else curses.A_DIM)
+                else:
+                    attr = curses.color_pair(cp) | curses.A_BOLD
+                stdscr.addstr(row, 0, line[:mid-1], attr)
             except: pass
         
         # Right — known
@@ -661,6 +670,7 @@ def main_curses(stdscr, device):
     curses.init_pair(CP_OK, curses.COLOR_GREEN, -1)
     curses.init_pair(CP_DIM, curses.COLOR_WHITE, -1)
     curses.init_pair(CP_SEP, curses.COLOR_WHITE, -1)
+    curses.init_pair(CP_FRESH, curses.COLOR_WHITE, -1)  # Blink effect for fresh detections
     
     stdscr.nodelay(False)
     stdscr.timeout(-1)
@@ -816,7 +826,7 @@ def main_curses(stdscr, device):
         
         # Wait with key handling
         stdscr.nodelay(True)
-        stdscr.timeout(1000)
+        stdscr.timeout(500)  # 500ms for smooth blink
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
             key = stdscr.getch()
@@ -831,7 +841,8 @@ def main_curses(stdscr, device):
             elif key == ord('v') or key == ord('V'):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) == 'sus'])
                 speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
-                draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
+            # Redraw table every 500ms for blink effect
+            draw_table(stdscr, unique, start_time, known_freqs, alert_count, artemis_db)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
@@ -939,7 +950,7 @@ def main_ansi():
     start_time = time.time()
     
     # ANSI colors
-    R = "\033[1;31m"; Y = "\033[1;33m"; G = "\033[1;32m"; C = "\033[1;36m"; D = "\033[2m"; N = "\033[0m"
+    R = "\033[1;31m"; Y = "\033[1;33m"; G = "\033[1;32m"; C = "\033[1;36m"; D = "\033[2m"; N = "\033[0m"; W = "\033[1;37m"
     
     signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h\033[H\033[J"), print(f"\n{C}Stopped.{N}"), sys.exit(0)))
     print("\033[2J\033[H\033[?25l", end="")
@@ -1034,6 +1045,12 @@ def main_ansi():
                 c = R if i < 3 else Y
                 seen_time = known_freqs.get(round(f), time.time())
                 ago = time_ago(seen_time)
+                # Fresh detection blink for ANSI
+                age = time.time() - seen_time
+                is_fresh = age < 30
+                blink_on = is_fresh and int(time.time() * 2) % 2 == 0
+                if is_fresh:
+                    c = W if blink_on else D  # White blink or dim
                 left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
             
             if i < len(ok):
