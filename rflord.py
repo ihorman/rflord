@@ -387,7 +387,7 @@ def draw_table(stdscr, signals, start_time, known_freqs, alert_count, artemis_db
     row = 0
     
     # Header
-    header = f" RF LORD {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
+    header = f" RfLord {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
     try:
         stdscr.addstr(row, 0, header[:w-1], curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
@@ -680,7 +680,7 @@ def main_ansi():
         sys.stdout.write("\033[H")
         
         # Header
-        print(f"{C} RF LORD{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
+        print(f"{C} RfLord{N} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ "
               f"{Y}Alerts {alert_count}{N} │ Tracked {len(known_freqs)} │ Sig {len(unique)} │ {D}Author: Ihor Kolodyuk{N}")
         
         # Column titles
