@@ -214,6 +214,20 @@ def est_distance(freq_mhz, power_dbfs):
     else:
         return f"{meters/1000:.0f}km"
 
+def est_distance_m(freq_mhz, power_dbfs):
+    """Return distance in meters as a number (for sorting)."""
+    rx_dbm = power_dbfs - 30
+    if 88 <= freq_mhz <= 108: tx = 70
+    elif 174 <= freq_mhz <= 230: tx = 60
+    elif 800 <= freq_mhz <= 960: tx = 43
+    elif 2400 <= freq_mhz <= 2500: tx = 20
+    elif 5150 <= freq_mhz <= 5900: tx = 23
+    else: tx = 30
+    fspl = tx + 2 - rx_dbm
+    fspl = max(20, min(160, fspl))
+    d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
+    return max(1, min(500000, d * 1000))
+
 def speak_distance(dist_str):
     """Convert distance string to spoken text: '284m' -> '284 meters'."""
     if dist_str.endswith('km'):
@@ -561,7 +575,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
-                        key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
+                        key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
 
 
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger')],
@@ -1045,7 +1059,7 @@ def main_ansi():
         sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
         suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
-                            key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), -x["peak"]))
+                            key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
         ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger")],
                     key=lambda x: x["peak"], reverse=True)
 
