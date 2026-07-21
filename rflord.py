@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.61"
+VERSION = "v0.5.62"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -333,10 +333,6 @@ def load_artemis():
 
 def identify_signal(freq_mhz, artemis_db):
     """Return best Artemis match. Returns dict with name, description, etc."""
-    # Military UHF band — override overly broad Artemis entries
-    # "Toyota Car Key" 315-433 MHz covers military UHF; it's actually Link-11
-    if 225 <= freq_mhz <= 400:
-        return {'name': 'Link-11 Personal Beacon', 'description': 'Link-11 Personal Beacon'}
     freq_hz = freq_mhz * 1e6
     best = None
     best_width = float('inf')
@@ -347,6 +343,9 @@ def identify_signal(freq_mhz, artemis_db):
             if width < best_width:
                 best_width = width
                 best = entry
+    # Override overly broad entries
+    if best and 'toyota' in best.get('name', '').lower():
+        return {'name': 'Link-11 Personal Beacon', 'description': 'Link-11 Personal Beacon'}
     return best
 
 def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
