@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.59"
+VERSION = "v0.5.60"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -943,8 +943,6 @@ def main_curses(stdscr, device):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
-            # Redraw table every 500ms for blink effect
-            draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
