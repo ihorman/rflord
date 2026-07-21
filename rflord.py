@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.57"
+VERSION = "v0.5.58"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -94,7 +94,6 @@ def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
 
 def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
     """RTL-SDR sweep using rtl_power. f_lo/f_hi in MHz (same as hackrf_sweep)."""
-    # Use 2.4MHz bin width (close to hackrf_sweep default)
     cmd = f"/usr/local/bin/rtl_power -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e {n*5}s 2>/dev/null | grep '^[0-9]'"
     return run_cmd(cmd, timeout=60)
 
@@ -347,41 +346,30 @@ def identify_signal(freq_mhz, artemis_db):
     return best
 
 def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
-    """Classify signal type. Military rules first, then Artemis, then fallback."""
-    
-    # Military UHF band — hardcoded rules take priority over Artemis
-    # Artemis has overly broad entries (e.g. "Toyota Car Key" 315-433 MHz)
-    # that misidentify military data links
-    if 225 <= freq_mhz <= 400:
-        # Link-11 uses multi-tone MFM — moderate std, bursty
-        if 255 <= freq_mhz <= 267: return "Link-11"   # Link-11 UHF known freqs
-        if 270 <= freq_mhz <= 285: return "Link-11"   # Link-11 UHF known freqs
-        if 300 <= freq_mhz <= 330: return "Mil/Enc"   # Military UHF
-        if 243 <= freq_mhz <= 244: return "Milstar"
-        if 264 <= freq_mhz <= 266: return "Gonets"
-        # Wideband bursty in UHF = likely data link
-        if std > 3: return "Link-11"
-        # Narrowband continuous in UHF = encrypted voice/data
-        if std < 2: return "Mil/Enc"
-        return "Mil/Enc"
-    
-    # Known real signals (non-military)
-    if 240 <= freq_mhz <= 242: return "DAB"
-    elif 235 <= freq_mhz <= 238: return "DAB+"
-    elif 390 <= freq_mhz <= 400: return "TETRA"
-    elif 337 <= freq_mhz <= 362: return "Keyfob"
-    
-    # Check Artemis database for non-military bands
+    """Classify signal type. Check Artemis first, then hardcoded rules."""
+    # Check Artemis database FIRST
     if artemis_db:
         art_entry = identify_signal(freq_mhz, artemis_db)
         if art_entry:
             return art_entry['name'][:18]
     
-    # Known real signals (continued)
-    if 140 <= freq_mhz <= 150 and std < 2:
+    # Known real signals
+    if 240 <= freq_mhz <= 242: return "DAB"
+    elif 235 <= freq_mhz <= 238: return "DAB+"
+    elif 390 <= freq_mhz <= 400: return "TETRA"
+    elif 337 <= freq_mhz <= 362: return "Keyfob"
+    elif 140 <= freq_mhz <= 150 and std < 2:
         return "Mil/Enc"
     elif 150 <= freq_mhz <= 174 and std < 2:
         return "Mil/Enc"
+    elif 300 <= freq_mhz <= 330:
+        return "Mil/Enc"
+    elif 225 <= freq_mhz <= 400 and std > 3:
+        return "Link-11"
+    elif 243 <= freq_mhz <= 244:
+        return "Milstar"
+    elif 264 <= freq_mhz <= 266:
+        return "Gonets"
     elif 174 <= freq_mhz <= 230:
         return "DAB+"
     elif 230 <= freq_mhz <= 285:
@@ -562,7 +550,7 @@ def draw_splash(stdscr, device, status_lines=None):
         try:
             if "████" in line:
                 color = CP_SUS_RED
-                stdscr.addstr(row, max(0, (w - len(line)) // 2), line[:w-1], curses.color_pair(color) | curses.A_BOLD)
+                stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
             elif ": OK" in line:
                 color = CP_OK
                 col = max(0, (w - len(line)) // 2)
@@ -589,7 +577,6 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     if known_freqs is None:
         known_freqs = {}
-    stdscr.erase()
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
@@ -652,11 +639,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
                            "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
                            "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
-            # Military UHF band — skip Artemis (overly broad entries like "Toyota Car Key")
-            if 225 <= f <= 400:
-                art = None
-            else:
-                art = identify_signal(f, artemis_db) if artemis_db else None
+            art = identify_signal(f, artemis_db) if artemis_db else None
             if art:
                 remark = art.get('description', '') or art.get('name', '')
             elif sig_type not in known_types:
@@ -807,10 +790,6 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
-    # Clear splash before first scan
-    stdscr.clear()
-    stdscr.refresh()
-    
     first_scan_done = False
     while True:
         scan_num += 1
@@ -956,6 +935,8 @@ def main_curses(stdscr, device):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
+            # Redraw table every 500ms for blink effect
+            draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         stdscr.nodelay(False)
         stdscr.timeout(-1)
 
@@ -1081,10 +1062,7 @@ def main_ansi():
         
         all_signals = []
         for f_lo, f_hi, bw, n in bands:
-            if device == "rtlsdr":
-                output = rtlsdr_sweep(f_lo, f_hi)
-            else:
-                output = hackrf_sweep(f_lo, f_hi, bw, n)
+            output = hackrf_sweep(f_lo, f_hi, bw, n)
             all_signals.extend(parse_sweep(output))
         
         seen = {}
@@ -1149,11 +1127,7 @@ def main_ansi():
                 known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
                                "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
                                "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
-                # Military UHF band — skip Artemis (overly broad entries like "Toyota Car Key")
-                if 225 <= f <= 400:
-                    art = None
-                else:
-                    art = identify_signal(f, artemis_db) if artemis_db else None
+                art = identify_signal(f, artemis_db) if artemis_db else None
                 if art:
                     remark = art.get('description', '') or art.get('name', '')
                 elif sig_type not in known_types:
@@ -1213,25 +1187,17 @@ def main_ansi():
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    # Military UHF band — use signal type, not Artemis (which has
-                    # overly broad entries like "Toyota Car Key" 315-433 MHz)
-                    if 225 <= f <= 400:
+                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_entry:
+                        # Use description first (matches table), fall back to name
+                        name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                        announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
+                    else:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
                             announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
                         else:
                             announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
-                    else:
-                        artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
-                        if artemis_entry:
-                            name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
-                        else:
-                            spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                            if spy_name:
-                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
-                            else:
-                                announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
