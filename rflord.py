@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.58"
+VERSION = "v0.5.59"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -333,6 +333,10 @@ def load_artemis():
 
 def identify_signal(freq_mhz, artemis_db):
     """Return best Artemis match. Returns dict with name, description, etc."""
+    # Military UHF band — override overly broad Artemis entries
+    # "Toyota Car Key" 315-433 MHz covers military UHF; it's actually Link-11
+    if 225 <= freq_mhz <= 400:
+        return {'name': 'Link-11 Personal Beacon', 'description': 'Link-11 Personal Beacon'}
     freq_hz = freq_mhz * 1e6
     best = None
     best_width = float('inf')
@@ -790,6 +794,10 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
+    # Clear splash artifacts before first scan
+    stdscr.clear()
+    stdscr.refresh()
+    
     first_scan_done = False
     while True:
         scan_num += 1
