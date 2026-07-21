@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.62"
+VERSION = "v0.5.63"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -801,7 +801,20 @@ def main_curses(stdscr, device):
         
         
         all_signals = []
-        for f_lo, f_hi, bw, n in bands:
+        h, w = stdscr.getmaxyx()
+        for bi, (f_lo, f_hi, bw, n) in enumerate(bands):
+            # Show scanning progress
+            try:
+                status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(bands)})... "
+                stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+                stdscr.refresh()
+            except: pass
+            # Check for quit between bands
+            stdscr.nodelay(True)
+            stdscr.timeout(0)
+            k = stdscr.getch()
+            if k == ord('q') or k == ord('Q'):
+                return
             if device == "rtlsdr":
                 output = rtlsdr_sweep(f_lo, f_hi)
             else:
@@ -939,8 +952,7 @@ def main_curses(stdscr, device):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
-        stdscr.nodelay(False)
-        stdscr.timeout(-1)
+        # Don't reset to blocking — next scan needs getch responsive
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
