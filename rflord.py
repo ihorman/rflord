@@ -20,10 +20,11 @@ import signal
 import shutil
 import glob
 import curses
+import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.63"
+VERSION = "v0.5.64"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -809,12 +810,18 @@ def main_curses(stdscr, device):
                 stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
                 stdscr.refresh()
             except: pass
-            # Check for quit between bands
-            stdscr.nodelay(True)
-            stdscr.timeout(0)
-            k = stdscr.getch()
-            if k == ord('q') or k == ord('Q'):
-                return
+            # Check for quit between bands via /dev/tty
+            try:
+                _tty = os.open('/dev/tty', os.O_RDONLY | os.O_NONBLOCK)
+                ready, _, _ = select.select([_tty], [], [], 0)
+                if ready:
+                    ch = os.read(_tty, 1)
+                    if ch and (ch[0] == ord('q') or ch[0] == ord('Q')):
+                        os.close(_tty)
+                        return
+                os.close(_tty)
+            except:
+                pass
             if device == "rtlsdr":
                 output = rtlsdr_sweep(f_lo, f_hi)
             else:
@@ -932,13 +939,32 @@ def main_curses(stdscr, device):
         # Refresh table after voice (speak() blocks and curses screen goes stale)
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
-        # Wait with key handling
-        stdscr.nodelay(True)
-        stdscr.timeout(500)  # 500ms for smooth blink
+        # Wait with key handling — read directly from /dev/tty
+        # curses getch() doesn't work reliably on uConsole
+        import select as _select
+        try:
+            tty_fd = os.open('/dev/tty', os.O_RDONLY | os.O_NONBLOCK)
+        except:
+            tty_fd = -1
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
-            key = stdscr.getch()
+            key = -1
+            if tty_fd >= 0:
+                ready, _, _ = _select.select([tty_fd], [], [], 0.5)
+                if ready:
+                    try:
+                        ch = os.read(tty_fd, 1)
+                        if ch:
+                            key = ch[0]
+                    except:
+                        pass
+            else:
+                # Fallback to curses getch
+                stdscr.nodelay(True)
+                stdscr.timeout(500)
+                key = stdscr.getch()
             if key == ord('q') or key == ord('Q'):
+                if tty_fd >= 0: os.close(tty_fd)
                 return
             elif key == ord('+') or key == ord('='):
                 INTERVAL = min(600, INTERVAL + 30)
@@ -952,6 +978,9 @@ def main_curses(stdscr, device):
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
+        if tty_fd >= 0:
+            try: os.close(tty_fd)
+            except: pass
         # Don't reset to blocking — next scan needs getch responsive
 
 # === LOGGING WITH WEEKLY ROTATION ===
