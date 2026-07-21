@@ -23,7 +23,7 @@ import curses
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.60"
+VERSION = "v0.5.61"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -581,6 +581,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     if known_freqs is None:
         known_freqs = {}
+    stdscr.erase()
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
@@ -794,10 +795,6 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
-    # Clear splash artifacts before first scan
-    stdscr.clear()
-    stdscr.refresh()
-    
     first_scan_done = False
     while True:
         scan_num += 1
