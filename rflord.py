@@ -24,7 +24,7 @@ import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.66"
+VERSION = "v0.5.67"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -138,6 +138,41 @@ def get_band(f):
         if lo <= f <= hi:
             return name
     return "?"
+
+def group_signals_by_type(signals, artemis_db=None):
+    """Group signals by type. Returns list of dicts with representative signal info."""
+    groups = {}
+    for s in signals:
+        f = s['freq'] / 1e6
+        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+        # Use Artemis name as group key if available
+        art = identify_signal(f, artemis_db) if artemis_db else None
+        key = art['name'] if art else sig_type
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(s)
+    
+    result = []
+    for key, sigs in groups.items():
+        # Pick strongest signal for power
+        strongest = max(sigs, key=lambda x: x['peak'])
+        # Pick nearest signal for distance (strongest = closest approximation)
+        nearest = min(sigs, key=lambda x: est_distance_m(x['freq']/1e6, x['peak']))
+        f_strong = strongest['freq'] / 1e6
+        f_near = nearest['freq'] / 1e6
+        result.append({
+            'type': key,
+            'count': len(sigs),
+            'freq': f_strong,
+            'peak': strongest['peak'],
+            'std': strongest['std'],
+            'dist': est_distance(f_near, nearest['peak']),
+            'band': get_band(f_strong),
+            'nearest_freq': f_near,
+        })
+    # Sort by count descending, then by peak
+    result.sort(key=lambda x: (-x['count'], -x['peak']))
+    return result
 
 def classify(f, power, std):
     # Known normal signals
@@ -590,6 +625,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
 
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger')],
                 key=lambda x: x['peak'], reverse=True)
+    ok_grouped = group_signals_by_type(ok, artemis_db)
     
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
@@ -614,7 +650,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     # Sub-headers
     try:
         stdscr.addstr(row, 0, "   Freq    Pwr   Std   Dist Type               Last Seen Remark"[:mid-1], curses.color_pair(CP_DIM))
-        rhdr = f" {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<15}"
+        rhdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
@@ -690,17 +726,14 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                 stdscr.addstr(row, 0, line[:mid-1], attr)
             except: pass
         
-        # Right — known
-        if i < len(ok):
-            s = ok[i]
-            f = s['freq'] / 1e6
-            dist = est_distance(f, s['peak'])
-            band = get_band(f)
-            art = identify_signal(f, artemis_db) if artemis_db else None
-            # Right table: freq(6)+sp+pwr(5)+sp+std(4)+sp+dist(5)+sp+band(4)+sp = 27 fixed
-            id_w = max(15, (w - mid) - 28)
-            art_str = (art['name'][:id_w] if art else "")
-            line = f" {f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}"
+        # Right — known (grouped by type)
+        if i < len(ok_grouped):
+            g = ok_grouped[i]
+            cnt = f"x{g['count']}" if g['count'] > 1 else ""
+            # Right table: cnt(4)+sp+pwr(6)+sp+dist(5)+sp+band(4)+sp = 21 fixed
+            id_w = max(15, (w - mid) - 22)
+            type_str = g['type'][:id_w]
+            line = f" {cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}"
             try:
                 stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
             except: pass
@@ -716,7 +749,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     extra = ""
     if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
-    if len(ok) > avail: extra += f" +{len(ok)-avail} ok"
+    if len(ok_grouped) > avail: extra += f" +{len(ok_grouped)-avail} ok"
     try:
         voice_str = "ON" if voice_enabled else "OFF"
         keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  +/-:Interval({INTERVAL}s){extra}"
@@ -1094,6 +1127,7 @@ def main_ansi():
                             key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
         ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger")],
                     key=lambda x: x["peak"], reverse=True)
+        ok_grouped = group_signals_by_type(ok, artemis_db)
 
 
         
@@ -1120,7 +1154,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D}   Freq    Pwr   Std   Dist Type               Last Seen Remark {N}{D} {'Freq':>6} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Bnd':>4} {'Identification':<25}{N}")
+        print(f"{D}   Freq    Pwr   Std   Dist Type               Last Seen Remark {N}{D} {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<25}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
@@ -1167,14 +1201,11 @@ def main_ansi():
                     c = DR  # Red on yellow background
                 left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
             
-            if i < len(ok):
-                s = ok[i]
-                f = s['freq'] / 1e6
-                dist = est_distance(f, s['peak'])
-                band = get_band(f)
-                art = identify_signal(f, artemis_db) if artemis_db else None
-                art_str = art['name'][:25] if art else ""
-                right = f"{G}{f:>6.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {band:>4} {art_str}{N}"
+            if i < len(ok_grouped):
+                g = ok_grouped[i]
+                cnt = f"x{g['count']}" if g['count'] > 1 else ""
+                type_str = g['type'][:25]
+                right = f"{G}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}{N}"
             
             if left or right:
                 left_pad = f" {left:<{mid - 1 + len(R) + len(N)}}"
@@ -1183,7 +1214,7 @@ def main_ansi():
         # Footer
         extra = ""
         if len(suspicious) > max_rows: extra += f" +{len(suspicious)-max_rows} sus"
-        if len(ok) > max_rows: extra += f" +{len(ok)-max_rows} ok"
+        if len(ok_grouped) > max_rows: extra += f" +{len(ok_grouped)-max_rows} ok"
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
         print(f"{D} Ctrl+C{extra}{N}")
         sys.stdout.write("\033[J")
