@@ -24,7 +24,7 @@ import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.69"
+VERSION = "v0.5.70"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -953,17 +953,21 @@ def main_curses(stdscr, device):
                 s0 = new_suspicious[0]
                 f0 = s0['freq'] / 1e6
                 dist = est_distance(f0, s0['peak'])
-                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
+                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, about {speak_distance(dist)}, below threshold.")
         
         # Refresh table after voice (speak() blocks and curses screen goes stale)
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
-        # Wait with key handling — curses getch() proven to work
+        # Wait with key handling
         stdscr.nodelay(True)
         stdscr.timeout(100)
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
             key = stdscr.getch()
+            # Debug: log key presses
+            if key != -1:
+                with open('/tmp/rflord_keys.log', 'a') as kf:
+                    kf.write(str(key) + "\n")
             if key == ord('q') or key == ord('Q'):
                 return
             elif key == ord('+') or key == ord('='):
@@ -1241,7 +1245,7 @@ def main_ansi():
                 s0 = new_suspicious[0]
                 f0 = s0['freq'] / 1e6
                 dist = est_distance(f0, s0['peak'])
-                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, below threshold.")
+                speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, about {speak_distance(dist)}, below threshold.")
         
         time.sleep(INTERVAL)
 
