@@ -24,7 +24,7 @@ import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.65"
+VERSION = "v0.5.66"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -95,7 +95,7 @@ def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
 
 def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
     """RTL-SDR sweep using rtl_power. f_lo/f_hi in MHz (same as hackrf_sweep)."""
-    cmd = f"/usr/local/bin/rtl_power -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e {n*5}s 2>/dev/null | grep '^[0-9]'"
+    cmd = f"/usr/local/bin/rtl_power -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e 2s 2>/dev/null | grep '^[0-9]'"
     return run_cmd(cmd, timeout=60)
 
 def parse_sweep(output):
@@ -935,7 +935,7 @@ def main_curses(stdscr, device):
         
         # Wait with key handling — curses getch() proven to work
         stdscr.nodelay(True)
-        stdscr.timeout(500)
+        stdscr.timeout(100)
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
             key = stdscr.getch()
