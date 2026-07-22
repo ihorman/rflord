@@ -21,10 +21,12 @@ import shutil
 import glob
 import curses
 import select
+import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.70"
+VERSION = "v0.5.71"
+_key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -359,6 +361,30 @@ def speak(text):
                 os.unlink(out)
     except:
         pass
+
+def _key_listener(stdscr):
+    """Background thread: reads getch() continuously for instant hotkey response."""
+    global _key_cmd
+    stdscr.nodelay(True)
+    stdscr.timeout(100)
+    while True:
+        try:
+            key = stdscr.getch()
+            if key == ord('q') or key == ord('Q'):
+                _key_cmd = 'quit'
+                return
+            elif key == ord('r') or key == ord('R'):
+                _key_cmd = 'rescan'
+            elif key == ord('m') or key == ord('M'):
+                _key_cmd = 'mute'
+            elif key == ord('v') or key == ord('V'):
+                _key_cmd = 'voice'
+            elif key == ord('+') or key == ord('='):
+                _key_cmd = 'interval_up'
+            elif key == ord('-'):
+                _key_cmd = 'interval_down'
+        except:
+            pass
 
 def ensure_sink():
     try:
@@ -820,6 +846,11 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
+    # Start key listener thread for instant hotkey response
+    _key_cmd = None
+    key_thread = threading.Thread(target=_key_listener, args=(stdscr,), daemon=True)
+    key_thread.start()
+    
     first_scan_done = False
     while True:
         scan_num += 1
@@ -835,11 +866,8 @@ def main_curses(stdscr, device):
                 stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
                 stdscr.refresh()
             except: pass
-            # Check for quit between bands
-            stdscr.nodelay(True)
-            stdscr.timeout(0)
-            k = stdscr.getch()
-            if k == ord('q') or k == ord('Q'):
+            # Check for quit between bands (key listener thread)
+            if _key_cmd == 'quit':
                 return
             if device == "rtlsdr":
                 output = rtlsdr_sweep(f_lo, f_hi)
@@ -958,32 +986,30 @@ def main_curses(stdscr, device):
         # Refresh table after voice (speak() blocks and curses screen goes stale)
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
-        # Wait with key handling
-        stdscr.nodelay(True)
-        stdscr.timeout(100)
+        # Wait — key listener thread handles hotkeys instantly
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
-            key = stdscr.getch()
-            # Debug: log key presses
-            if key != -1:
-                with open('/tmp/rflord_keys.log', 'a') as kf:
-                    kf.write(str(key) + "\n")
-            if key == ord('q') or key == ord('Q'):
+            time.sleep(0.2)
+            if _key_cmd == 'quit':
+                _key_cmd = None
                 return
-            elif key == ord('+') or key == ord('='):
-                INTERVAL = min(600, INTERVAL + 30)
-            elif key == ord('-'):
-                INTERVAL = max(30, INTERVAL - 30)
-            elif key == ord('r') or key == ord('R'):
+            elif _key_cmd == 'rescan':
+                _key_cmd = None
                 break
-            elif key == ord('m') or key == ord('M'):
+            elif _key_cmd == 'mute':
+                _key_cmd = None
                 voice_enabled = not voice_enabled
-            elif key == ord('v') or key == ord('V'):
+            elif _key_cmd == 'voice':
+                _key_cmd = None
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
-        stdscr.nodelay(False)
-        stdscr.timeout(-1)
+            elif _key_cmd == 'interval_up':
+                _key_cmd = None
+                INTERVAL = min(600, INTERVAL + 30)
+            elif _key_cmd == 'interval_down':
+                _key_cmd = None
+                INTERVAL = max(30, INTERVAL - 30)
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
