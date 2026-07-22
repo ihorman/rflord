@@ -24,7 +24,7 @@ import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.68"
+VERSION = "v0.5.69"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -1115,12 +1115,13 @@ def main_ansi():
         unique = list(seen.values())
         sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
-        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
-                            key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
         ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger")],
                     key=lambda x: x["peak"], reverse=True)
         ok_grouped = group_signals_by_type(ok, artemis_db)
-
+        
+        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+                           key=lambda x: (-x['peak'],))
+        sus_grouped = group_suspicious(suspicious, artemis_db)
 
         
         new_suspicious = []
@@ -1159,39 +1160,13 @@ def main_ansi():
             left = ""
             right = ""
             
-            if i < len(suspicious):
-                s = suspicious[i]
-                f = s['freq'] / 1e6
-                dist = est_distance(f, s['peak'])
-                sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                icon = pad_icon(get_signal_icon(sig_type, f, s['std']))
-                # Remark: prefer Artemis identification over spy_db
-                known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
-                               "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
-                               "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
-                art = identify_signal(f, artemis_db) if artemis_db else None
-                if art:
-                    remark = art.get('description', '') or art.get('name', '')
-                elif sig_type not in known_types:
-                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                    remark = spy_name if spy_name else ""
-                else:
-                    remark = ""
-                remark_w = max(12, mid - 55)
-                remark = remark[:remark_w]
-                c = R if i < 3 else Y
-                seen_time = known_freqs.get(round(f), time.time())
-                ago = time_ago(seen_time)
-                # Fresh detection blink for ANSI
-                age = time.time() - seen_time
-                is_fresh = age < 30
-                blink_on = is_fresh and int(time.time() * 2) % 2 == 0
-                if is_fresh:
-                    c = R if blink_on else Y  # Red/Yellow blink
-                # Danger signals (narrowband in DVB-T2 band)
-                if classify(f, s['peak'], s['std']) == "danger":
-                    c = DR  # Red on yellow background
-                left = f"{c}{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}{N}"
+            if i < len(sus_grouped):
+                g = sus_grouped[i]
+                cnt = f"x{g['count']}" if g['count'] > 1 else ""
+                c = R if g['classify'] == 'danger' else Y
+                remark_w = max(12, mid - 42)
+                remark = g['remark'][:remark_w]
+                left = f"{c}{cnt:>4} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<18} {remark}{N}"
             
             if i < len(ok_grouped):
                 g = ok_grouped[i]
@@ -1205,7 +1180,7 @@ def main_ansi():
         
         # Footer
         extra = ""
-        if len(suspicious) > max_rows: extra += f" +{len(suspicious)-max_rows} sus"
+        if len(sus_grouped) > max_rows: extra += f" +{len(sus_grouped)-max_rows} sus"
         if len(ok_grouped) > max_rows: extra += f" +{len(ok_grouped)-max_rows} ok"
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
         print(f"{D} Ctrl+C{extra}{N}")
