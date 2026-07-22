@@ -25,9 +25,20 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.71"
+VERSION = "v0.5.72"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
+
+# Suppress mode (HackRF TX only)
+_suppress_active = False
+_suppress_targets = {}  # name -> bool
+SUPPRESS_TARGETS = {
+    "Cellular": {"freqs": [850e6, 900e6, 1800e6, 1900e6, 2100e6, 2600e6], "bw": 20e6},
+    "Bluetooth": {"freqs": [2440e6], "bw": 80e6},
+    "GPS":       {"freqs": [1575.42e6], "bw": 4e6},
+}
+_suppress_procs = []  # running hackrf_transfer processes
+_menu_active = False  # Pause key listener when menu is open
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
 VOICE_THRESHOLD = -15
@@ -362,6 +373,111 @@ def speak(text):
     except:
         pass
 
+def _generate_noise(path, duration_s=10, rate=2000000):
+    """Generate random IQ noise file for HackRF TX."""
+    n = int(rate * duration_s)
+    samples = np.random.randint(-127, 128, n, dtype=np.int8)
+    samples.tofile(path)
+
+def _suppress_start():
+    """Start transmitting noise on selected frequencies."""
+    global _suppress_procs
+    _suppress_stop()  # Kill any existing
+    noise = '/tmp/rflord_noise.bin'
+    if not os.path.exists(noise):
+        _generate_noise(noise, duration_s=60)
+    for name, active in _suppress_targets.items():
+        if not active:
+            continue
+        info = SUPPRESS_TARGETS[name]
+        for freq in info['freqs']:
+            cmd = ["hackrf_transfer", "-t", noise, "-f", str(int(freq)),
+                   "-s", "2000000", "-a", "1", "-x", "40", "-n", "120000000"]
+            try:
+                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _suppress_procs.append(p)
+            except:
+                pass
+
+def _suppress_stop():
+    """Stop all suppress transmissions."""
+    global _suppress_procs
+    for p in _suppress_procs:
+        try:
+            p.terminate()
+            p.wait(timeout=2)
+        except:
+            try: p.kill()
+            except: pass
+    _suppress_procs = []
+
+def _show_suppress_menu(stdscr):
+    """Show suppress target selection popup. Returns True if changed."""
+    global _suppress_targets, _menu_active
+    _menu_active = True
+    h, w = stdscr.getmaxyx()
+    options = list(SUPPRESS_TARGETS.keys())
+    cursor = 0
+    
+    while True:
+        # Draw popup
+        pw, ph = 36, len(options) + 6
+        py = max(0, (h - ph) // 2)
+        px = max(0, (w - pw) // 2)
+        
+        # Border
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        
+        try:
+            stdscr.addstr(py, px + 2, " SUPPRESS TARGETS ", curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
+            stdscr.addstr(py + 1, px + 1, " Use arrows, Space to toggle, Enter=OK ", curses.color_pair(CP_DIM))
+            stdscr.addstr(py + 2, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+        except: pass
+        
+        for i, name in enumerate(options):
+            active = _suppress_targets.get(name, False)
+            marker = "[X]" if active else "[ ]"
+            sel = i == cursor
+            attr = curses.color_pair(CP_SUS_RED if active else CP_OK)
+            if sel:
+                attr |= curses.A_REVERSE
+            try:
+                stdscr.addstr(py + 3 + i, px + 2, f" {marker} {name:<20}", attr)
+            except: pass
+        
+        try:
+            any_active = any(_suppress_targets.get(n, False) for n in options)
+            status = "S:Suppress ON" if any_active else "S:Suppress OFF"
+            stdscr.addstr(py + ph - 2, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+            stdscr.addstr(py + ph - 1, px + 2, f" {status:<30}", curses.color_pair(CP_DIM))
+        except: pass
+        
+        stdscr.refresh()
+        
+        # Input
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        key = stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(100)
+        
+        if key == curses.KEY_UP and cursor > 0:
+            cursor -= 1
+        elif key == curses.KEY_DOWN and cursor < len(options) - 1:
+            cursor += 1
+        elif key == ord(' '):
+            name = options[cursor]
+            _suppress_targets[name] = not _suppress_targets.get(name, False)
+        elif key in (10, 13):
+            _menu_active = False
+            return True
+        elif key == 27:  # ESC to close
+            _menu_active = False
+            return True
+
 def _key_listener(stdscr):
     """Background thread: reads getch() continuously for instant hotkey response."""
     global _key_cmd
@@ -369,6 +485,9 @@ def _key_listener(stdscr):
     stdscr.timeout(100)
     while True:
         try:
+            if _menu_active:
+                time.sleep(0.2)
+                continue
             key = stdscr.getch()
             if key == ord('q') or key == ord('Q'):
                 _key_cmd = 'quit'
@@ -383,6 +502,8 @@ def _key_listener(stdscr):
                 _key_cmd = 'interval_up'
             elif key == ord('-'):
                 _key_cmd = 'interval_down'
+            elif key == ord('s') or key == ord('S'):
+                _key_cmd = 'suppress'
         except:
             pass
 
@@ -770,7 +891,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     if len(ok_grouped) > avail: extra += f" +{len(ok_grouped)-avail} ok"
     try:
         voice_str = "ON" if voice_enabled else "OFF"
-        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  +/-:Interval({INTERVAL}s){extra}"
+        sup_str = "ON" if _suppress_active else "OFF"
+        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s){extra}"
         stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -992,6 +1114,7 @@ def main_curses(stdscr, device):
             time.sleep(0.2)
             if _key_cmd == 'quit':
                 _key_cmd = None
+                _suppress_stop()
                 return
             elif _key_cmd == 'rescan':
                 _key_cmd = None
@@ -1010,6 +1133,17 @@ def main_curses(stdscr, device):
             elif _key_cmd == 'interval_down':
                 _key_cmd = None
                 INTERVAL = max(30, INTERVAL - 30)
+            elif _key_cmd == 'suppress':
+                _key_cmd = None
+                _show_suppress_menu(stdscr)
+                # Apply changes
+                any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
+                if any_active and device == "hackrf":
+                    _suppress_active = True
+                    _suppress_start()
+                else:
+                    _suppress_active = False
+                    _suppress_stop()
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
