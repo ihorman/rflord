@@ -24,7 +24,7 @@ import select
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.67"
+VERSION = "v0.5.68"
 INTERVAL = 30
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
@@ -156,7 +156,7 @@ def group_signals_by_type(signals, artemis_db=None):
     for key, sigs in groups.items():
         # Pick strongest signal for power
         strongest = max(sigs, key=lambda x: x['peak'])
-        # Pick nearest signal for distance (strongest = closest approximation)
+        # Pick nearest signal for distance
         nearest = min(sigs, key=lambda x: est_distance_m(x['freq']/1e6, x['peak']))
         f_strong = strongest['freq'] / 1e6
         f_near = nearest['freq'] / 1e6
@@ -171,6 +171,39 @@ def group_signals_by_type(signals, artemis_db=None):
             'nearest_freq': f_near,
         })
     # Sort by count descending, then by peak
+    result.sort(key=lambda x: (-x['count'], -x['peak']))
+    return result
+
+def group_suspicious(signals, artemis_db=None):
+    """Group suspicious signals by identification (artemis name or signal type)."""
+    groups = {}
+    for s in signals:
+        f = s['freq'] / 1e6
+        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+        art = identify_signal(f, artemis_db) if artemis_db else None
+        key = art['name'] if art else sig_type
+        if key not in groups:
+            groups[key] = []
+        groups[key].append(s)
+    
+    result = []
+    for key, sigs in groups.items():
+        strongest = max(sigs, key=lambda x: x['peak'])
+        nearest = min(sigs, key=lambda x: est_distance_m(x['freq']/1e6, x['peak']))
+        f_strong = strongest['freq'] / 1e6
+        f_near = nearest['freq'] / 1e6
+        art = identify_signal(f_strong, artemis_db) if artemis_db else None
+        remark = art.get('description', '') if art else ''
+        result.append({
+            'type': key,
+            'count': len(sigs),
+            'freq': f_strong,
+            'peak': strongest['peak'],
+            'std': strongest['std'],
+            'dist': est_distance(f_near, nearest['peak']),
+            'remark': remark,
+            'classify': classify(f_strong, strongest['peak'], strongest['std']),
+        })
     result.sort(key=lambda x: (-x['count'], -x['peak']))
     return result
 
@@ -621,6 +654,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                         key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
+    sus_grouped = group_suspicious(suspicious, artemis_db)
 
 
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger')],
@@ -649,7 +683,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, "   Freq    Pwr   Std   Dist Type               Last Seen Remark"[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, "   Cnt   Freq    Pwr   Std   Dist Type               Remark"[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
@@ -668,62 +702,20 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     for i in range(avail):
         if row >= h - 2: break
         
-        # Left — suspicious
-        if i < len(suspicious):
-            s = suspicious[i]
-            f = s['freq'] / 1e6
-            dist = est_distance(f, s['peak'])
-            sig_type = get_signal_type(f, 0, 0, s["std"], artemis_db)
-            icon = pad_icon(get_signal_icon(sig_type, f, s["std"]))
-            # Remark: prefer Artemis identification over spy_db
-            # Only use spy_db if signal type is unknown/suspicious
-            known_types = {"DAB", "DAB+", "TETRA", "Keyfob", "GSM", "WiFi/BT", "WiFi/FPV",
-                           "Link-11", "Milstar", "Gonets", "Display Port", "USB-noise",
-                           "USB-burst", "CDMA2000", "3G WCDMA", "LTE", "FM", "AIR"}
-            art = identify_signal(f, artemis_db) if artemis_db else None
-            if art:
-                remark = art.get('description', '') or art.get('name', '')
-            elif sig_type not in known_types:
-                # Signal type unknown — check spy_db
-                spy_name, spy_icon, threat = identify_spy_device(f, s["std"])
-                if spy_name:
-                    log.critical(f"SPY: {spy_name} at {f:.1f} MHz")
-                    remark = spy_name
-                else:
-                    remark = ""
-            else:
-                remark = ""
-            # Fixed fields: icon(2)+sp+freq(5)+sp+pwr(6)+sp+std(5)+sp+dist(5)+sp+type(18)+sp+ago(5)+sp = 53 visible cells
-            remark_w = max(12, mid - 55)
-            remark = remark[:remark_w]
-            # Red if within 1000m, yellow otherwise; danger signals get special color
-            dist_m = s['peak']  # we'll calculate actual meters
-            try:
-                d_val = float(dist.rstrip('mk'))
-                d_m = d_val * 1000 if dist.endswith('km') else d_val
-            except:
-                d_m = 9999
-            cls = classify(f, s['peak'], s['std'])
+        # Left — suspicious (grouped)
+        if i < len(sus_grouped):
+            g = sus_grouped[i]
+            cnt = f"x{g['count']}" if g['count'] > 1 else ""
+            cls = g['classify']
             if cls == "danger":
-                cp = CP_DANGER  # Red on yellow for DVB-T2 band narrowband
-            elif d_m < 1000:
-                cp = CP_SUS_RED
+                cp = CP_DANGER
             else:
-                cp = CP_SUS_YEL
-            seen_time = last_seen.get(round(f), time.time())
-            ago = time_ago(seen_time)
-            # Fresh detection blink: first seen < 30s ago
-            first_time = known_freqs.get(round(f), time.time())
-            age = time.time() - first_time
-            is_fresh = age < 30
-            blink_on = is_fresh and int(time.time() * 2) % 2 == 0  # 0.5s on, 0.5s off
-            line = f"{icon} {f:>5.1f} {s['peak']:>+5.1f} {s['std']:>4.1f} {dist:>5} {sig_type:<18} {ago:>5} {remark}"
+                cp = CP_SUS_RED
+            remark_w = max(12, mid - 42)
+            remark = g['remark'][:remark_w]
+            line = f" {cnt:>4} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<18} {remark}"
             try:
-                if is_fresh:
-                    attr = curses.color_pair(CP_SUS_RED if blink_on else CP_SUS_YEL) | curses.A_BOLD
-                else:
-                    attr = curses.color_pair(cp) | curses.A_BOLD
-                stdscr.addstr(row, 0, line[:mid-1], attr)
+                stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
         
         # Right — known (grouped by type)
@@ -748,7 +740,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     row += 1
     
     extra = ""
-    if len(suspicious) > avail: extra += f" +{len(suspicious)-avail} sus"
+    if len(sus_grouped) > avail: extra += f" +{len(sus_grouped)-avail} sus"
     if len(ok_grouped) > avail: extra += f" +{len(ok_grouped)-avail} ok"
     try:
         voice_str = "ON" if voice_enabled else "OFF"
@@ -1154,7 +1146,7 @@ def main_ansi():
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
         # Sub-headers
-        print(f"{D}   Freq    Pwr   Std   Dist Type               Last Seen Remark {N}{D} {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<25}{N}")
+        print(f"{D}   Cnt   Freq    Pwr   Std   Dist Type               Remark {N}{D} {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<25}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
