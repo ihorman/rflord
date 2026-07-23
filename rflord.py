@@ -25,7 +25,7 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.74"
+VERSION = "v0.5.75"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 
@@ -69,7 +69,7 @@ def detect_device():
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         import serial
         switched = False
-        for port in ["/dev/ttyACM0", "/dev/ttyACM1"]:
+        for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
             try:
                 print(f"  Trying {port}...", flush=True)
                 s = serial.Serial(port, 115200, timeout=2)
