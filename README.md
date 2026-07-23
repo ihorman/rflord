@@ -6,16 +6,17 @@ Real-time RF spectrum monitoring with drone detection, voice alerts, and signal 
 
 ## Features
 
-- **Live spectrum table** — static refresh, color-coded by signal strength
+- **Live spectrum table** — split-screen: suspicious left, known signals right, grouped by type
+- **Signal grouping** — same-type signals merged with count, strongest power, nearest distance
 - **Drone detection** — 45 RF signatures (DJI OcuSync/O3/O4, HDZero, Walksnail, ELRS, Crossfire, analog FPV)
-- **Voice alerts** — TTS announcements with signal type analysis on new detections
-- **Signal classification** — Artemis 3 database (426 signatures) + custom drone database
-- **Territory detection** — CITY / SUBURBAN / TOWNSHIP / COUNTRYSIDE based on signal density
+- **Voice alerts** — TTS HAL 9000 voice with signal type + distance announcements
+- **Signal classification** — Artemis 3 database (432 signatures) + spy database (47) + drone database (45)
+- **Suppress mode** — HackRF TX jammer for Cellular, Bluetooth, GPS (hotkey: s)
 - **Distance estimation** — FSPL-based distance calculation per signal type
+- **Instant hotkeys** — background key listener thread for q/r/m/v/s/+/- (no scan delay)
+- **RTL-SDR support** — auto-detects HackRF or RTL-SDR, adapts scan method
 - **Voice decoding** — DSD (DMR, D-STAR, NXDN), multimon-ng (POCSAG, DTMF, Morse)
-- **FPV video decode** — Analog NTSC/PAL frame extraction from FPV transmitters
-- **IQ capture** — Automatic sample capture and analysis for suspicious signals
-- **Duty scan mode** — Continuous monitoring with configurable interval
+- **Duty scan mode** — continuous monitoring with configurable interval
 
 ## Quick Start
 
