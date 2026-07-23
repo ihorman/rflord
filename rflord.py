@@ -25,7 +25,7 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.73"
+VERSION = "v0.5.74"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 
@@ -1135,15 +1135,21 @@ def main_curses(stdscr, device):
                 INTERVAL = max(30, INTERVAL - 30)
             elif _key_cmd == 'suppress':
                 _key_cmd = None
-                _show_suppress_menu(stdscr)
-                # Apply changes
+                # ANSI mode: toggle all targets on/off
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
-                if any_active and device == "hackrf":
-                    _suppress_active = True
-                    _suppress_start()
-                else:
+                if any_active:
+                    # Currently ON -> turn OFF
+                    for n in SUPPRESS_TARGETS:
+                        _suppress_targets[n] = False
                     _suppress_active = False
                     _suppress_stop()
+                else:
+                    # Currently OFF -> turn all ON
+                    for n in SUPPRESS_TARGETS:
+                        _suppress_targets[n] = True
+                    if device == "hackrf":
+                        _suppress_active = True
+                        _suppress_start()
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
