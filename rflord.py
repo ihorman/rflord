@@ -25,7 +25,7 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.76"
+VERSION = "v0.5.77"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 
@@ -414,9 +414,9 @@ def _suppress_stop():
 def _show_suppress_menu(stdscr):
     """Show suppress target selection popup. Returns True if changed."""
     global _suppress_targets, _menu_active
-    _menu_active = True
-    # Wait for key listener to finish its current getch() and see _menu_active
-    time.sleep(0.5)
+    # Save screen state
+    stdscr.nodelay(False)
+    stdscr.timeout(-1)
     h, w = stdscr.getmaxyx()
     options = list(SUPPRESS_TARGETS.keys())
     cursor = 0
@@ -474,44 +474,37 @@ def _show_suppress_menu(stdscr):
             name = options[cursor]
             _suppress_targets[name] = not _suppress_targets.get(name, False)
         elif key in (10, 13):
-            _menu_active = False
+            stdscr.nodelay(True)
+            stdscr.timeout(200)
             return True
         elif key == 27:  # ESC to close
-            _menu_active = False
+            stdscr.nodelay(True)
+            stdscr.timeout(200)
             return True
 
-def _key_listener(stdscr):
-    """Background thread: reads getch() continuously for instant hotkey response."""
-    global _key_cmd
-    stdscr.nodelay(True)
-    stdscr.timeout(100)
-    while True:
-        try:
-            if _menu_active:
-                time.sleep(0.1)
-                continue
-            # Double-check before getch — menu might have just set _menu_active
-            if _menu_active:
-                time.sleep(0.1)
-                continue
-            key = stdscr.getch()
-            if key == ord('q') or key == ord('Q'):
-                _key_cmd = 'quit'
-                return
-            elif key == ord('r') or key == ord('R'):
-                _key_cmd = 'rescan'
-            elif key == ord('m') or key == ord('M'):
-                _key_cmd = 'mute'
-            elif key == ord('v') or key == ord('V'):
-                _key_cmd = 'voice'
-            elif key == ord('+') or key == ord('='):
-                _key_cmd = 'interval_up'
-            elif key == ord('-'):
-                _key_cmd = 'interval_down'
-            elif key == ord('s') or key == ord('S'):
-                _key_cmd = 'suppress'
-        except:
-            pass
+def _read_key(stdscr):
+    """Read one key from curses. Returns command string or None."""
+    try:
+        key = stdscr.getch()
+        if key == -1:
+            return None
+        if key == ord('q') or key == ord('Q'):
+            return 'quit'
+        elif key == ord('r') or key == ord('R'):
+            return 'rescan'
+        elif key == ord('m') or key == ord('M'):
+            return 'mute'
+        elif key == ord('v') or key == ord('V'):
+            return 'voice'
+        elif key == ord('+') or key == ord('='):
+            return 'interval_up'
+        elif key == ord('-'):
+            return 'interval_down'
+        elif key == ord('s') or key == ord('S'):
+            return 'suppress'
+    except:
+        pass
+    return None
 
 def ensure_sink():
     try:
@@ -893,8 +886,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     row += 1
     
     extra = ""
-    if len(sus_grouped) > avail: extra += f" +{len(sus_grouped)-avail} sus"
-    if len(ok_grouped) > avail: extra += f" +{len(ok_grouped)-avail} ok"
+    if len(sus_grouped) > avail: extra += f" | {len(sus_grouped)-avail} more suspicious"
+    if len(ok_grouped) > avail: extra += f" | {len(ok_grouped)-avail} more signals"
     try:
         voice_str = "ON" if voice_enabled else "OFF"
         sup_str = "ON" if _suppress_active else "OFF"
@@ -974,10 +967,10 @@ def main_curses(stdscr, device):
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
-    # Start key listener thread for instant hotkey response
+    # Enable non-blocking getch for hotkeys
     _key_cmd = None
-    key_thread = threading.Thread(target=_key_listener, args=(stdscr,), daemon=True)
-    key_thread.start()
+    stdscr.nodelay(True)
+    stdscr.timeout(200)  # getch() returns -1 after 200ms
     
     first_scan_done = False
     while True:
@@ -994,8 +987,10 @@ def main_curses(stdscr, device):
                 stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
                 stdscr.refresh()
             except: pass
-            # Check for quit between bands (key listener thread)
-            if _key_cmd == 'quit':
+            # Check for quit between bands
+            key = _read_key(stdscr)
+            if key == 'quit':
+                _suppress_stop()
                 return
             if device == "rtlsdr":
                 output = rtlsdr_sweep(f_lo, f_hi)
@@ -1118,35 +1113,30 @@ def main_curses(stdscr, device):
         # Refresh table after voice (speak() blocks and curses screen goes stale)
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
-        # Wait — key listener thread handles hotkeys instantly
+        # Wait with non-blocking key reads (200ms timeout per getch)
         wait_end = time.time() + INTERVAL
         while time.time() < wait_end:
-            time.sleep(0.2)
-            if _key_cmd == 'quit':
-                _key_cmd = None
+            key = _read_key(stdscr)
+            if key == 'quit':
                 _suppress_stop()
                 return
-            elif _key_cmd == 'rescan':
-                _key_cmd = None
+            elif key == 'rescan':
                 break
-            elif _key_cmd == 'mute':
-                _key_cmd = None
+            elif key == 'mute':
                 voice_enabled = not voice_enabled
-            elif _key_cmd == 'voice':
-                _key_cmd = None
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'voice':
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
-            elif _key_cmd == 'interval_up':
-                _key_cmd = None
+            elif key == 'interval_up':
                 INTERVAL = min(600, INTERVAL + 30)
-            elif _key_cmd == 'interval_down':
-                _key_cmd = None
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'interval_down':
                 INTERVAL = max(30, INTERVAL - 30)
-            elif _key_cmd == 'suppress':
-                _key_cmd = None
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'suppress':
                 _show_suppress_menu(stdscr)
-                # Apply suppress state based on menu selections
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
                 if any_active and device == "hackrf":
                     _suppress_active = True
@@ -1154,7 +1144,6 @@ def main_curses(stdscr, device):
                 else:
                     _suppress_active = False
                     _suppress_stop()
-                # Redraw table after menu closes
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
 
 # === LOGGING WITH WEEKLY ROTATION ===
