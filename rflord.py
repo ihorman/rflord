@@ -25,7 +25,7 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.75"
+VERSION = "v0.5.76"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 
@@ -415,6 +415,8 @@ def _show_suppress_menu(stdscr):
     """Show suppress target selection popup. Returns True if changed."""
     global _suppress_targets, _menu_active
     _menu_active = True
+    # Wait for key listener to finish its current getch() and see _menu_active
+    time.sleep(0.5)
     h, w = stdscr.getmaxyx()
     options = list(SUPPRESS_TARGETS.keys())
     cursor = 0
@@ -486,7 +488,11 @@ def _key_listener(stdscr):
     while True:
         try:
             if _menu_active:
-                time.sleep(0.2)
+                time.sleep(0.1)
+                continue
+            # Double-check before getch — menu might have just set _menu_active
+            if _menu_active:
+                time.sleep(0.1)
                 continue
             key = stdscr.getch()
             if key == ord('q') or key == ord('Q'):
@@ -1032,6 +1038,10 @@ def main_curses(stdscr, device):
             key = round(s['freq'] / 1e6)
             last_seen[key] = now  # Update every scan
         
+        # First scan: clear screen completely to fix splash-to-table transition
+        if not first_scan_done:
+            stdscr.clear()
+            stdscr.refresh()
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
         # Update splash status after first scan
@@ -1135,21 +1145,17 @@ def main_curses(stdscr, device):
                 INTERVAL = max(30, INTERVAL - 30)
             elif _key_cmd == 'suppress':
                 _key_cmd = None
-                # ANSI mode: toggle all targets on/off
+                _show_suppress_menu(stdscr)
+                # Apply suppress state based on menu selections
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
-                if any_active:
-                    # Currently ON -> turn OFF
-                    for n in SUPPRESS_TARGETS:
-                        _suppress_targets[n] = False
+                if any_active and device == "hackrf":
+                    _suppress_active = True
+                    _suppress_start()
+                else:
                     _suppress_active = False
                     _suppress_stop()
-                else:
-                    # Currently OFF -> turn all ON
-                    for n in SUPPRESS_TARGETS:
-                        _suppress_targets[n] = True
-                    if device == "hackrf":
-                        _suppress_active = True
-                        _suppress_start()
+                # Redraw table after menu closes
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
@@ -1221,11 +1227,11 @@ def main():
             curses.wrapper(main_curses, device)
         else:
             # Non-TTY: use ANSI mode
-            main_ansi()
+            main_ansi(device)
     except Exception:
-        main_ansi()
+        main_ansi(device)
 
-def main_ansi():
+def main_ansi(device=None):
     """ANSI fallback mode for non-TTY or when curses fails."""
     global INTERVAL, VOICE_THRESHOLD
     
@@ -1235,7 +1241,8 @@ def main_ansi():
         if arg == "--threshold" and i + 2 <= len(sys.argv):
             VOICE_THRESHOLD = int(sys.argv[i + 2])
     
-    device = detect_device()
+    if not device:
+        device = detect_device()
     if not device:
         print("No SDR device found.")
         sys.exit(1)
@@ -1273,7 +1280,10 @@ def main_ansi():
         
         all_signals = []
         for f_lo, f_hi, bw, n in bands:
-            output = hackrf_sweep(f_lo, f_hi, bw, n)
+            if device == "rtlsdr":
+                output = rtlsdr_sweep(f_lo, f_hi)
+            else:
+                output = hackrf_sweep(f_lo, f_hi, bw, n)
             all_signals.extend(parse_sweep(output))
         
         seen = {}
