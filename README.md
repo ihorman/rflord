@@ -13,7 +13,7 @@ Real-time RF spectrum monitoring with drone detection, voice alerts, and signal 
 - **Signal classification** — Artemis 3 database (432 signatures) + spy database (47) + drone database (45)
 - **Suppress mode** — HackRF TX jammer for Cellular, Bluetooth, GPS (hotkey: s)
 - **Distance estimation** — FSPL-based distance calculation per signal type
-- **Instant hotkeys** — background key listener thread for q/r/m/v/s/+/- (no scan delay)
+- **Hotkeys** — main-loop getch with 200ms timeout for q/r/m/v/s/+/- (no background thread)
 - **RTL-SDR support** — auto-detects HackRF or RTL-SDR, adapts scan method
 - **Voice decoding** — DSD (DMR, D-STAR, NXDN), multimon-ng (POCSAG, DTMF, Morse)
 - **Duty scan mode** — continuous monitoring with configurable interval
@@ -153,6 +153,24 @@ tv_capture.py      — TV frame capture (analog + digital)
 - **Data**: POCSAG, FLEX, EAS, DTMF, Morse, AFSK
 - **Cellular**: GSM 900/1800, 3G, 4G LTE
 - **Broadcast**: FM, DAB, DVB-T
+
+## Tests
+
+88 pytest tests in `tests/`:
+
+```bash
+# Run all tests
+python3 -m pytest tests/ -v
+
+# Or use the runner script
+./tests/run_tests.sh
+```
+
+- `test_table_alignment.py` — 45 tests (distance, classify, bands, row widths, grouping, priority, noise floor, sweep parsing)
+- `test_hotkeys.py` — 24 tests (key mapping, suppress menu arrows/space/enter/ESC, suppress targets)
+- `test_hackrf_switcher.py` — 10 tests (device detection, PortaPack ACM1→ACM0, sweep commands)
+
+All tests mock hardware — no SDR needed. Run before every push.
 
 ## Limitations
 
