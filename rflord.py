@@ -25,7 +25,7 @@ import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 
 # Config
-VERSION = "v0.5.77"
+VERSION = "v0.5.78"
 _key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
 INTERVAL = 30
 
@@ -68,7 +68,7 @@ def detect_device():
     if "1d50:6018" in lsusb:
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         import serial
-        switched = False
+        # Try BOTH ports — don't break after first successful open
         for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
             try:
                 print(f"  Trying {port}...", flush=True)
@@ -81,20 +81,26 @@ def detect_device():
                 time.sleep(3)
                 s.read(s.in_waiting or 500)
                 s.close()
-                switched = True
                 print(f"  Sent mode switch on {port}", flush=True)
-                break
+                # Check if switch worked before trying next port
+                time.sleep(2)
+                lsusb = run_cmd("lsusb")
+                if "1d50:6089" in lsusb:
+                    print("  Switched to HackRF mode!", flush=True)
+                    break
             except Exception as e:
                 print(f"  {port} failed: {e}", flush=True)
-        # Wait for USB re-enumeration (no usbreset — device does it itself)
-        time.sleep(5)
-        lsusb = run_cmd("lsusb")
-        if "1d50:6089" in lsusb:
-            print("  Switched to HackRF mode!", flush=True)
-        elif switched:
-            print("  Mode switch sent but HackRF not detected, retrying...", flush=True)
+        else:
+            # Neither port worked — wait and retry
             time.sleep(5)
             lsusb = run_cmd("lsusb")
+            if "1d50:6089" not in lsusb:
+                print("  Switch failed. Trying usbreset...", flush=True)
+                try:
+                    subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
+                    time.sleep(3)
+                    lsusb = run_cmd("lsusb")
+                except: pass
     if "1d50:6089" in lsusb:
         return "hackrf"
     if "0bda:2838" in lsusb:

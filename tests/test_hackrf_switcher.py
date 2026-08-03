@@ -104,11 +104,13 @@ class TestPortaPackSwitch:
         with patch('rflord.run_cmd') as mock_run, \
              patch('serial.Serial') as mock_serial, \
              patch('time.sleep'):
-            # PortaPack -> after switch still PortaPack -> after retry still PortaPack
+            # Initial lsusb -> after ACM1 -> after ACM0 -> in else branch -> after usbreset
             mock_run.side_effect = [
-                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",
-                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",
-                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",
+                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # initial
+                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # after ACM1
+                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # after ACM0
+                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # else retry
+                "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # after usbreset
             ]
             mock_conn = MagicMock()
             mock_serial.return_value = mock_conn
