@@ -738,6 +738,17 @@ def signal_priority(freq_mhz, std):
     # Priority 2: Other suspicious (USB noise, Display Port, etc.)
     return 2
 
+def severity_score(freq_mhz, peak_dbfs, std, classify_result):
+    """Higher score = more severe/important. Combines priority, strength, classification."""
+    pri = signal_priority(freq_mhz, std)
+    # Priority weight: military(0) -> 100, spy(1) -> 50, other(2) -> 10
+    pri_weight = {0: 100, 1: 50, 2: 10}.get(pri, 10)
+    # Strength weight: normalize power (stronger = higher)
+    strength_weight = max(0, peak_dbfs + 80)
+    # Classification bonus
+    cls_bonus = {"danger": 30, "sus": 10, "ok": 0}.get(classify_result, 0)
+    return pri_weight + strength_weight + cls_bonus
+
 def draw_splash(stdscr, device, status_lines=None):
     """Show loading splash with version info and status."""
     stdscr.erase()
@@ -805,11 +816,11 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     h, w = stdscr.getmaxyx()
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
-                        key=lambda x: (signal_priority(x["freq"]/1e6, x["std"]), est_distance_m(x["freq"]/1e6, x["peak"]), -x["peak"]))
+                        key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
 
 
-    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger')],
+    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
                 key=lambda x: x['peak'], reverse=True)
     ok_grouped = group_signals_by_type(ok, artemis_db)
     
@@ -835,7 +846,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, "   Cnt   Freq    Pwr   Std   Dist Type               Remark"[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, " !  Freq    Pwr   Std  Dist Type            Desc"[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
@@ -863,9 +874,10 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                 cp = CP_DANGER
             else:
                 cp = CP_SUS_RED
-            remark_w = max(12, mid - 42)
+            remark_w = max(20, mid - 40)
             remark = g['remark'][:remark_w]
-            line = f" {cnt:>4} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<18} {remark}"
+            sev = '!!!' if cls == 'danger' else ('!! ' if cls == 'sus' else '!  ')
+            line = f" {sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}"
             try:
                 stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
             except: pass
@@ -1290,7 +1302,7 @@ def main_ansi(device=None):
         unique = list(seen.values())
         sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
-        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger")],
+        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
                     key=lambda x: x["peak"], reverse=True)
         ok_grouped = group_signals_by_type(ok, artemis_db)
         
