@@ -41,7 +41,7 @@ _suppress_procs = []  # running hackrf_transfer processes
 _menu_active = False  # Pause key listener when menu is open
 TTS_VOICE = "en-US-SteffanNeural"
 HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
-VOICE_THRESHOLD = -15
+VOICE_THRESHOLD = -50
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
 DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
 MAX_AGE_DAYS = 30
@@ -1071,7 +1071,7 @@ def main_curses(stdscr, device):
             cleanup_old_logs()
         
         # Voice alert
-        if new_suspicious:
+        if new_suspicious and voice_enabled:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
             
