@@ -31,7 +31,7 @@ from scan_accel import ScanAccelerator
 
 # Load config
 _cfg = load_config()
-VERSION = "v0.6.0"
+VERSION = "v0.6.1"
 _key_cmd = None
 INTERVAL = _cfg['scan']['interval']
 
@@ -400,6 +400,7 @@ def in_legitimate_band(freq_mhz):
 
 def speak(text):
     """Speak text via edge-tts with HAL 9000 effect. No timeout — let it play fully."""
+    log.info(f"SPEAK: {text[:100]}")
     try:
         raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
         out = tempfile.mktemp(suffix='.wav', prefix='hal_')
@@ -1398,8 +1399,8 @@ def main_curses(stdscr, device):
                 dist = est_distance(f0, s0['peak'])
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, about {speak_distance(dist)}, below threshold.")
         
-        # Periodic voice summary every 5 scans (even if no new signals)
-        elif voice_enabled and scan_num > 0 and scan_num % 5 == 0:
+        # Startup voice + periodic summary every 5 scans
+        elif voice_enabled and (scan_num == 1 or scan_num % 5 == 0):
             sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
             if sus_count > 0:
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
