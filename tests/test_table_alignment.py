@@ -148,6 +148,24 @@ class TestTableFormatting:
         header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up 00:00:00 │ Alerts 0 │ Tracked 0 │ Sig 0 │ Author: Ihor Kolodyuk"
         assert len(header) <= 100, f"Header too wide: {len(header)} > 100"
 
+    def test_left_column_alignment(self):
+        """Left table header columns must align with data columns."""
+        header = "!    Freq  Pwr    Std   Dist  Type           Desc"
+        # Data format: cursor(1)+sev(3)+' '+freq(5)+' '+peak(5)+' '+std(4)+' '+dist(5)+' '+type(14)+' '+remark
+        data = f" {'!! '} {680.0:>5.1f} {-30.0:>+5.1f} {2.5:>4.1f} {333:>5} {'Tetrapol':<14} Tetrapol"
+        # Check that header labels align with data value positions
+        assert header[0] == "!", "Sev at pos 0"
+        assert "680.0" in data[5:10], "Freq value in data[5:10]"
+        assert "Freq" in header[5:9], "Freq label in header[5:9]"
+        assert "-30.0" in data[11:16], "Pwr value in data[11:16]"
+        assert "Pwr" in header[11:14], "Pwr label in header[11:14]"
+        assert "2.5" in data[17:21], "Std value in data[17:21]"
+        assert "Std" in header[18:21], "Std label in header[18:21]"
+        assert "333" in data[22:27], "Dist value in data[22:27]"
+        assert "Dist" in header[24:28], "Dist label in header[24:28]"
+        assert "Tetrapol" in data[28:42], "Type value in data[28:42]"
+        assert "Type" in header[30:34], "Type label in header[30:34]"
+
     def test_footer_fits_width(self):
         """Footer with hotkey hints should fit in 80-char terminal."""
         keys = " q:Quit  r:Rescan  v:Voice(ON)  m:Mute  s:Suppress(OFF)  +/-:Interval(30s)"
