@@ -1682,20 +1682,22 @@ def main_curses(stdscr, devices):
                             else:
                                 announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 
-                voice_result = None
-                for s in above_threshold:
-                    if s['std'] < 6:
-                        voice_result = try_voice_decode(s['freq'] / 1e6)
-                        break
-                
-                for s in above_threshold:
-                    f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    if sig_type == "Analog" and s['std'] < 4:
-                        play_voice_sample(f)
-                        if not voice_result:
-                            voice_result = "analog voice sample, saved to decoded folder"
-                        break
+                # Voice decode + play in background thread (blocks 15+ seconds)
+                def _voice_worker():
+                    vr = None
+                    for s in above_threshold:
+                        if s['std'] < 6:
+                            vr = try_voice_decode(s['freq'] / 1e6)
+                            break
+                    for s in above_threshold:
+                        f = s['freq'] / 1e6
+                        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                        if sig_type == "Analog" and s['std'] < 4:
+                            play_voice_sample(f)
+                            if not vr:
+                                vr = "analog voice sample, saved to decoded folder"
+                            break
+                threading.Thread(target=_voice_worker, daemon=True, name="rflord-voice").start()
                 
                 count = len(above_threshold)
                 if count == 1:
@@ -1706,9 +1708,6 @@ def main_curses(stdscr, devices):
                     msg = f"Alert. {count} new signals above threshold. Strongest at {announcements[0]}."
                     if count > 2:
                         msg += f" Also at {announcements[1]}."
-                
-                if voice_result:
-                    msg += f" Detected {voice_result}."
                 
                 speak(msg)
             else:
