@@ -1969,8 +1969,10 @@ def main_ansi(device=None):
         mid = 60
         print(f"{R} {'SUSPICIOUS':^{mid-2}}{N}{G} {'KNOWN SIGNALS':^{38}}{N}")
         
-        # Sub-headers
-        print(f"{D}   Cnt   Freq    Pwr   Std   Dist Type               Remark {N}{D} {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<25}{N}")
+        # Sub-headers — use same format specifiers as data
+        left_hdr = f"{'Cnt':>4} {'Freq':>5} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Type':<18} Remark"
+        right_hdr = f"{'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<25}"
+        print(f"{D} {left_hdr}  {right_hdr}{N}")
         
         # Separator
         print(f"{D} {'─'*(mid-2)} {'─'*38}{N}")
