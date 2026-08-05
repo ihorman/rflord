@@ -20,7 +20,7 @@ DEFAULTS = {
         'threshold': -50,
         'voice_name': 'en-US-SteffanNeural',
         'rate': '-15%',
-        'hal_effect': '/usr/share/sounds/hal9000/cantdo.wav',
+        'hal_effect': '~/.local/bin/hal-effect.sh',
     },
     'display': {
         'theme': 'dark',
