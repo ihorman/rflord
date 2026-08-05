@@ -23,28 +23,52 @@ import curses
 import select
 import threading
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
+from config import load_config
+from history import SignalHistory
+from export import export_csv, export_json
+from blacklist import load_blacklist, filter_blacklisted
+from scan_accel import ScanAccelerator
 
-# Config
-VERSION = "v0.5.78"
-_key_cmd = None  # Set by key listener thread: 'quit', 'rescan', 'mute', etc.
-INTERVAL = 30
+# Load config
+_cfg = load_config()
+VERSION = "v0.6.0"
+_key_cmd = None
+INTERVAL = _cfg['scan']['interval']
 
-# Suppress mode (HackRF TX only)
+# Suppress mode
+def _build_suppress_targets(cfg_targets):
+    """Convert config list format to dict format for suppress targets."""
+    if isinstance(cfg_targets, dict):
+        return cfg_targets  # Already in old format
+    # Convert list format: [{name, freq, bw}, ...] -> {Name: {freqs: [...], bw: N}}
+    groups = {}
+    for t in cfg_targets:
+        name = t['name']
+        # Capitalize known names nicely
+        name_map = {'cellular': 'Cellular', 'bluetooth': 'Bluetooth', 'gps': 'GPS'}
+        name = name_map.get(name, name.capitalize())
+        if name not in groups:
+            groups[name] = {'freqs': [], 'bw': t.get('bw', 20e6)}
+        groups[name]['freqs'].append(t['freq'])
+        # Use largest bw seen for the group
+        if t.get('bw', 0) > groups[name]['bw']:
+            groups[name]['bw'] = t['bw']
+    return groups
+
 _suppress_active = False
-_suppress_targets = {}  # name -> bool
-SUPPRESS_TARGETS = {
-    "Cellular": {"freqs": [850e6, 900e6, 1800e6, 1900e6, 2100e6, 2600e6], "bw": 20e6},
-    "Bluetooth": {"freqs": [2440e6], "bw": 80e6},
-    "GPS":       {"freqs": [1575.42e6], "bw": 4e6},
-}
-_suppress_procs = []  # running hackrf_transfer processes
-_menu_active = False  # Pause key listener when menu is open
-TTS_VOICE = "en-US-SteffanNeural"
-HAL_EFFECT = os.path.expanduser("~/.local/bin/hal-effect.sh")
-VOICE_THRESHOLD = -50
+_suppress_targets = {}
+SUPPRESS_TARGETS = _build_suppress_targets(_cfg['suppress']['targets'])
+_suppress_procs = []
+_menu_active = False
+_cursor_pos = 0
+_cursor_active = False
+
+TTS_VOICE = _cfg['voice']['voice_name']
+HAL_EFFECT = os.path.expanduser(_cfg['voice']['hal_effect'])
+VOICE_THRESHOLD = _cfg['voice']['threshold']
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
-DECODED_DIR = "/home/ihorman/sdr_captures/rflord_decoded"
-MAX_AGE_DAYS = 30
+DECODED_DIR = os.path.expanduser(_cfg['history'].get('decoded_dir', '~/sdr_captures/rflord_decoded'))
+MAX_AGE_DAYS = _cfg['history']['max_days']
 
 # Color pairs
 CP_HEADER = 1
@@ -164,8 +188,11 @@ def group_signals_by_type(signals, artemis_db=None):
     for s in signals:
         f = s['freq'] / 1e6
         sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-        # Use Artemis name as group key if available
-        art = identify_signal(f, artemis_db) if artemis_db else None
+        # Use Artemis name as group key if available, skip for military UHF
+        if 225 <= f <= 400:
+            art = None
+        else:
+            art = identify_signal(f, artemis_db) if artemis_db else None
         key = art['name'] if art else sig_type
         if key not in groups:
             groups[key] = []
@@ -199,7 +226,11 @@ def group_suspicious(signals, artemis_db=None):
     for s in signals:
         f = s['freq'] / 1e6
         sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-        art = identify_signal(f, artemis_db) if artemis_db else None
+        # Skip Artemis for military UHF band
+        if 225 <= f <= 400:
+            art = None
+        else:
+            art = identify_signal(f, artemis_db) if artemis_db else None
         key = art['name'] if art else sig_type
         if key not in groups:
             groups[key] = []
@@ -211,7 +242,11 @@ def group_suspicious(signals, artemis_db=None):
         nearest = min(sigs, key=lambda x: est_distance_m(x['freq']/1e6, x['peak']))
         f_strong = strongest['freq'] / 1e6
         f_near = nearest['freq'] / 1e6
-        art = identify_signal(f_strong, artemis_db) if artemis_db else None
+        # Skip Artemis for military UHF band
+        if 225 <= f_strong <= 400:
+            art = None
+        else:
+            art = identify_signal(f_strong, artemis_db) if artemis_db else None
         remark = art.get('description', '') if art else ''
         result.append({
             'type': key,
@@ -222,6 +257,7 @@ def group_suspicious(signals, artemis_db=None):
             'dist': est_distance(f_near, nearest['peak']),
             'remark': remark,
             'classify': classify(f_strong, strongest['peak'], strongest['std']),
+            '_strongest': strongest,  # Keep reference for detail popup
         })
     result.sort(key=lambda x: (-x['count'], -x['peak']))
     return result
@@ -367,17 +403,27 @@ def speak(text):
     try:
         raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
         out = tempfile.mktemp(suffix='.wav', prefix='hal_')
-        subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
+        r1 = subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
                         "--text", text, "--write-media", raw],
                        capture_output=True, timeout=60)
+        if r1.returncode != 0:
+            log.warning(f"TTS edge-tts failed: rc={r1.returncode} stderr={r1.stderr[:200]}")
+            return
         if os.path.exists(raw):
-            subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
+            r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
             os.unlink(raw)
+            if r2.returncode != 0:
+                log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
+                return
             if os.path.exists(out):
-                subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
                 os.unlink(out)
-    except:
-        pass
+                if r3.returncode != 0:
+                    log.warning(f"TTS paplay failed: rc={r3.returncode} stderr={r3.stderr[:200]}")
+        else:
+            log.warning(f"TTS raw file not created: {raw}")
+    except Exception as e:
+        log.warning(f"TTS exception: {e}")
 
 def _generate_noise(path, duration_s=10, rate=2000000):
     """Generate random IQ noise file for HackRF TX."""
@@ -488,8 +534,121 @@ def _show_suppress_menu(stdscr):
             stdscr.timeout(200)
             return True
 
+def _show_signal_detail(stdscr, signal, artemis_db):
+    """Show signal detail popup with export option."""
+    h, w = stdscr.getmaxyx()
+    f = signal['freq'] / 1e6
+    sig_type = get_signal_type(f, 0, 0, signal['std'], artemis_db)
+    dist = est_distance(f, signal['peak'])
+    cls = classify(f, signal['peak'], signal['std'])
+    band = get_band(f)
+    spy_name, spy_icon, threat = identify_spy_device(f, signal['std'])
+    
+    # Artemis lookup (skip for military UHF)
+    art = None
+    if not (225 <= f <= 400):
+        art = identify_signal(f, artemis_db) if artemis_db else None
+    
+    lines = [
+        f"  Frequency:    {f:.3f} MHz",
+        f"  Type:         {sig_type}",
+        f"  Band:         {band}",
+        f"  Power:        {signal['peak']:+.1f} dBFS",
+        f"  Std Dev:      {signal['std']:.1f}",
+        f"  Distance:     {dist}",
+        f"  Class:        {cls}",
+    ]
+    
+    if art:
+        lines.append(f"  Artemis:      {art['name']}")
+        if art.get('description'):
+            lines.append(f"  Description:  {art['description'][:50]}")
+        if art.get('modulation'):
+            lines.append(f"  Modulation:   {art['modulation']}")
+        if art.get('country'):
+            lines.append(f"  Country:      {art['country']}")
+    
+    if spy_name:
+        lines.append(f"  Spy Device:   {spy_icon} {spy_name}")
+        lines.append(f"  Threat Level: {threat}")
+    
+    # Build popup
+    pw = max(48, max(len(l) for l in lines) + 4)
+    ph = len(lines) + 6
+    py = max(0, (h - ph) // 2)
+    px = max(0, (w - pw) // 2)
+    
+    while True:
+        # Draw popup
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        
+        try:
+            cp = CP_DANGER if cls == "danger" else (CP_SUS_RED if cls == "sus" else CP_OK)
+            title = f" SIGNAL DETAIL — {f:.1f} MHz "
+            stdscr.addstr(py, px + max(0, (pw - len(title)) // 2), title, curses.color_pair(cp) | curses.A_BOLD)
+            stdscr.addstr(py + 1, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+        except: pass
+        
+        for i, line in enumerate(lines):
+            try:
+                attr = curses.color_pair(CP_OK)
+                if "Spy Device" in line or "Threat" in line:
+                    attr = curses.color_pair(CP_SUS_RED) | curses.A_BOLD
+                elif "Artemis" in line or "Description" in line:
+                    attr = curses.color_pair(CP_SUS_YEL)
+                stdscr.addstr(py + 2 + i, px + 1, line[:pw-2], attr)
+            except: pass
+        
+        try:
+            stdscr.addstr(py + ph - 3, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+            stdscr.addstr(py + ph - 2, px + 2, " e:Export  ESC/d:Close ", curses.color_pair(CP_DIM))
+        except: pass
+        
+        stdscr.refresh()
+        
+        # Input
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        key = stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(100)
+        
+        if key in (ord('d'), ord('D'), 27, 10, 13):  # d, ESC, Enter
+            return
+        elif key == ord('e') or key == ord('E'):
+            # Export to file
+            try:
+                export_dir = "/home/ihorman/sdr_captures/rflord_exports"
+                os.makedirs(export_dir, exist_ok=True)
+                ts = time.strftime("%Y%m%d_%H%M%S")
+                freq_label = f"{f:.1f}".replace('.', 'p')
+                filename = f"{ts}_{freq_label}MHz_signal.txt"
+                filepath = os.path.join(export_dir, filename)
+                with open(filepath, 'w') as ef:
+                    ef.write(f"RfLord Signal Export — {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    ef.write(f"{'=' * 50}\n\n")
+                    for line in lines:
+                        ef.write(line.strip() + "\n")
+                    ef.write(f"\nRaw data: freq={signal['freq']}, peak={signal['peak']}, std={signal['std']}\n")
+                # Flash confirmation
+                try:
+                    stdscr.addstr(py + ph - 2, px + 2, f" Exported: {filename} ", curses.color_pair(CP_OK) | curses.A_BOLD)
+                    stdscr.refresh()
+                    time.sleep(1.5)
+                except: pass
+            except Exception as ex:
+                try:
+                    stdscr.addstr(py + ph - 2, px + 2, f" Export failed: {ex} ", curses.color_pair(CP_SUS_RED))
+                    stdscr.refresh()
+                    time.sleep(1.5)
+                except: pass
+
 def _read_key(stdscr):
     """Read one key from curses. Returns command string or None."""
+    global _cursor_active
     try:
         key = stdscr.getch()
         if key == -1:
@@ -508,6 +667,23 @@ def _read_key(stdscr):
             return 'interval_down'
         elif key == ord('s') or key == ord('S'):
             return 'suppress'
+        elif key == curses.KEY_UP:
+            _cursor_active = True
+            return 'cursor_up'
+        elif key == curses.KEY_DOWN:
+            _cursor_active = True
+            return 'cursor_down'
+        elif key == ord('d') or key == ord('D'):
+            return 'details'
+        elif key == ord('e') or key == ord('E'):
+            return 'export'
+        elif key == ord('l') or key == ord('L'):
+            return 'log'
+        elif key == ord('h') or key == ord('H'):
+            return 'history'
+        elif key == 27:  # ESC — deactivate cursor
+            _cursor_active = False
+            return 'cursor_off'
     except:
         pass
     return None
@@ -564,36 +740,44 @@ def identify_signal(freq_mhz, artemis_db):
             if width < best_width:
                 best_width = width
                 best = entry
-    # Override overly broad entries
-    if best and 'toyota' in best.get('name', '').lower():
-        return {'name': 'Link-11 Personal Beacon', 'description': 'Link-11 Personal Beacon'}
     return best
 
 def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
-    """Classify signal type. Check Artemis first, then hardcoded rules."""
-    # Check Artemis database FIRST
+    """Classify signal type. Military rules first, then Artemis, then fallback."""
+    
+    # Military UHF band — hardcoded rules take priority over Artemis
+    # Artemis has overly broad entries (e.g. "Toyota Car Key" 315-433 MHz)
+    # that misidentify military data links
+    if 225 <= freq_mhz <= 400:
+        # Link-11 uses multi-tone MFM — moderate std, bursty
+        if 255 <= freq_mhz <= 267: return "Link-11"   # Link-11 UHF known freqs
+        if 270 <= freq_mhz <= 285: return "Link-11"   # Link-11 UHF known freqs
+        if 300 <= freq_mhz <= 330: return "Mil/Enc"   # Military UHF
+        if 243 <= freq_mhz <= 244: return "Milstar"
+        if 264 <= freq_mhz <= 266: return "Gonets"
+        # Wideband bursty in UHF = likely data link
+        if std > 3: return "Link-11"
+        # Narrowband continuous in UHF = encrypted voice/data
+        if std < 2: return "Mil/Enc"
+        return "Mil/Enc"
+    
+    # Known real signals (non-military)
+    if 240 <= freq_mhz <= 242: return "DAB"
+    elif 235 <= freq_mhz <= 238: return "DAB+"
+    elif 390 <= freq_mhz <= 400: return "TETRA"
+    elif 337 <= freq_mhz <= 362: return "Keyfob"
+    
+    # Check Artemis database for non-military bands
     if artemis_db:
         art_entry = identify_signal(freq_mhz, artemis_db)
         if art_entry:
             return art_entry['name'][:18]
     
-    # Known real signals
-    if 240 <= freq_mhz <= 242: return "DAB"
-    elif 235 <= freq_mhz <= 238: return "DAB+"
-    elif 390 <= freq_mhz <= 400: return "TETRA"
-    elif 337 <= freq_mhz <= 362: return "Keyfob"
-    elif 140 <= freq_mhz <= 150 and std < 2:
+    # Known real signals (continued)
+    if 140 <= freq_mhz <= 150 and std < 2:
         return "Mil/Enc"
     elif 150 <= freq_mhz <= 174 and std < 2:
         return "Mil/Enc"
-    elif 300 <= freq_mhz <= 330:
-        return "Mil/Enc"
-    elif 225 <= freq_mhz <= 400 and std > 3:
-        return "Link-11"
-    elif 243 <= freq_mhz <= 244:
-        return "Milstar"
-    elif 264 <= freq_mhz <= 266:
-        return "Gonets"
     elif 174 <= freq_mhz <= 230:
         return "DAB+"
     elif 230 <= freq_mhz <= 285:
@@ -810,6 +994,7 @@ def draw_splash(stdscr, device, status_lines=None):
 
 def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
+    global _cursor_pos, _cursor_active
     if known_freqs is None:
         known_freqs = {}
     stdscr.erase()
@@ -818,6 +1003,12 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
+    
+    # Clamp cursor to valid range
+    if _cursor_active and len(sus_grouped) > 0:
+        _cursor_pos = max(0, min(_cursor_pos, len(sus_grouped) - 1))
+    else:
+        _cursor_pos = 0
 
 
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
@@ -877,9 +1068,21 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             remark_w = max(20, mid - 40)
             remark = g['remark'][:remark_w]
             sev = '!!!' if cls == 'danger' else ('!! ' if cls == 'sus' else '!  ')
-            line = f" {sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}"
+            # Trend arrow
+            trend = ''
+            if history:
+                trend_vals = history.get_trend(g['freq'], n=5)
+                if len(trend_vals) >= 2:
+                    if trend_vals[-1] > trend_vals[0] + 3: trend = ' '
+                    elif trend_vals[-1] < trend_vals[0] - 3: trend = ' '
+            # Cursor indicator
+            cursor_mark = '▸' if (_cursor_active and i == _cursor_pos) else ' '
+            line = f"{cursor_mark}{sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}{trend}"
             try:
-                stdscr.addstr(row, 0, line[:mid-1], curses.color_pair(cp) | curses.A_BOLD)
+                attr = curses.color_pair(cp) | curses.A_BOLD
+                if _cursor_active and i == _cursor_pos:
+                    attr |= curses.A_REVERSE
+                stdscr.addstr(row, 0, line[:mid-1], attr)
             except: pass
         
         # Right — known (grouped by type)
@@ -909,7 +1112,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     try:
         voice_str = "ON" if voice_enabled else "OFF"
         sup_str = "ON" if _suppress_active else "OFF"
-        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s){extra}"
+        cur_str = f"[{_cursor_pos+1}/{len(sus_grouped)}]" if (_cursor_active and len(sus_grouped) > 0) else ""
+        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
         stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -919,7 +1123,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     stdscr.refresh()
 
 def main_curses(stdscr, device):
-    global INTERVAL, VOICE_THRESHOLD
+    global INTERVAL, VOICE_THRESHOLD, _cursor_pos
     
     # Setup curses
     curses.cbreak()
@@ -952,7 +1156,35 @@ def main_curses(stdscr, device):
     
     ensure_sink()
     artemis_db = load_artemis()
-    
+
+    # Initialize new modules
+    blacklist = load_blacklist(_cfg.get('blacklist', {}).get('file'))
+    history = SignalHistory(_cfg['history']['db_path']) if _cfg['history']['enabled'] else None
+    accel = ScanAccelerator(_cfg.get('scan_acceleration', {}).get('skip_after_empty', 3)) if _cfg.get('scan_acceleration', {}).get('enabled', False) else None
+    web_dash = None
+    if _cfg.get('web', {}).get('enabled', False):
+        try:
+            from web import WebDashboard
+            web_dash = WebDashboard(port=_cfg['web']['port'])
+            web_dash.start()
+        except Exception: pass
+    # State persistence
+    state_file = os.path.expanduser('~/.local/share/rflord/state.json')
+    os.makedirs(os.path.dirname(state_file), exist_ok=True)
+
+    # SIGTERM handler for state save
+    import json
+    def save_state(*_):
+        state = {'known_freqs': {str(k): v for k, v in known_freqs.items()},
+                 'last_seen': {str(k): v for k, v in last_seen.items()},
+                 'alert_count': alert_count}
+        with open(state_file, 'w') as f:
+            json.dump(state, f)
+        if web_dash: web_dash.stop()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, save_state)
+    signal.signal(signal.SIGINT, save_state)
+
     db_count = len(artemis_db) if artemis_db else 0
     try:
         from spy_db import SPY_DEVICES
@@ -979,7 +1211,19 @@ def main_curses(stdscr, device):
     alert_count = 0
     voice_enabled = True
     start_time = time.time()
-    
+
+    # Try to restore state from previous session
+    if os.path.exists(state_file):
+        try:
+            import json
+            with open(state_file) as f:
+                state = json.load(f)
+            known_freqs = {int(k): v for k, v in state.get('known_freqs', {}).items()}
+            last_seen = {int(k): v for k, v in state.get('last_seen', {}).items()}
+            alert_count = state.get('alert_count', 0)
+            os.unlink(state_file)
+        except: pass
+
     # Reset HackRF once at startup
     if device == "hackrf":
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
@@ -998,10 +1242,11 @@ def main_curses(stdscr, device):
         
         all_signals = []
         h, w = stdscr.getmaxyx()
-        for bi, (f_lo, f_hi, bw, n) in enumerate(bands):
+        scan_bands = accel.get_active_bands(bands) if accel else bands
+        for bi, (f_lo, f_hi, bw, n) in enumerate(scan_bands):
             # Show scanning progress
             try:
-                status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(bands)})... "
+                status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(scan_bands)})... "
                 stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
                 stdscr.refresh()
             except: pass
@@ -1023,7 +1268,24 @@ def main_curses(stdscr, device):
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
-        
+
+        # Blacklist filtering
+        unique = filter_blacklisted(unique, blacklist)
+
+        # Scan acceleration recording
+        if accel:
+            for f_lo, f_hi, bw, n in bands:
+                band_signals = [s for s in unique if f_lo*1e6 <= s['freq'] <= f_hi*1e6]
+                accel.record_band_result(f_lo, f_hi, len(band_signals))
+
+        # History recording
+        if history:
+            history.record_scan(unique, device)
+
+        # Web dashboard update
+        if web_dash:
+            web_dash.update_signals(unique, {'version': VERSION, 'alerts': alert_count, 'device': device})
+
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
         probes = detect_active_probes(unique, noise_floor)
@@ -1072,6 +1334,7 @@ def main_curses(stdscr, device):
         
         # Voice alert
         if new_suspicious and voice_enabled:
+            log.info(f"Voice alert: {len(new_suspicious)} new suspicious signals")
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
             
@@ -1081,17 +1344,24 @@ def main_curses(stdscr, device):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
-                    if artemis_entry:
-                        # Use description first (matches table), fall back to name
-                        name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                        announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
-                    else:
+                    # Military UHF band — skip Artemis (overly broad entries)
+                    if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
                             announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
                         else:
                             announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                    else:
+                        artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                        if artemis_entry:
+                            name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                            announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
+                        else:
+                            spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                            if spy_name:
+                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                            else:
+                                announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 
                 voice_result = None
                 for s in above_threshold:
@@ -1128,6 +1398,12 @@ def main_curses(stdscr, device):
                 dist = est_distance(f0, s0['peak'])
                 speak(f"{len(new_suspicious)} new weak signals. Strongest at {f0:.0f} megahertz, about {speak_distance(dist)}, below threshold.")
         
+        # Periodic voice summary every 5 scans (even if no new signals)
+        elif voice_enabled and scan_num > 0 and scan_num % 5 == 0:
+            sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
+            if sus_count > 0:
+                speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
+        
         # Refresh table after voice (speak() blocks and curses screen goes stale)
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
         
@@ -1162,6 +1438,39 @@ def main_curses(stdscr, device):
                 else:
                     _suppress_active = False
                     _suppress_stop()
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'cursor_up':
+                _cursor_pos = max(0, _cursor_pos - 1)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'cursor_down':
+                # Get current suspicious count
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                sus_grp = group_suspicious(sus_list, artemis_db)
+                _cursor_pos = min(len(sus_grp) - 1, _cursor_pos + 1)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'cursor_off':
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'details':
+                # Get the selected signal from suspicious list
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                sus_grp = group_suspicious(sus_list, artemis_db)
+                if 0 <= _cursor_pos < len(sus_grp):
+                    # Get the strongest signal in the group
+                    g = sus_grp[_cursor_pos]
+                    _show_signal_detail(stdscr, g['_strongest'], artemis_db)
+                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'export':
+                export_dir = os.path.expanduser(_cfg['export']['path'])
+                os.makedirs(export_dir, exist_ok=True)
+                ts = time.strftime('%Y%m%d_%H%M%S')
+                fmt = _cfg['export']['format']
+                filepath = os.path.join(export_dir, f'scan_{ts}.{fmt}')
+                if fmt == 'csv':
+                    export_csv(filepath, unique)
+                else:
+                    export_json(filepath, unique)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
 
 # === LOGGING WITH WEEKLY ROTATION ===
@@ -1388,17 +1697,24 @@ def main_ansi(device=None):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
-                    if artemis_entry:
-                        # Use description first (matches table), fall back to name
-                        name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                        announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
-                    else:
+                    # Military UHF band — skip Artemis (overly broad entries)
+                    if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
                             announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
                         else:
                             announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                    else:
+                        artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                        if artemis_entry:
+                            name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                            announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
+                        else:
+                            spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                            if spy_name:
+                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                            else:
+                                announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
