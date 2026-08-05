@@ -13,28 +13,28 @@ class TestDeviceDetection:
         with patch('rflord.run_cmd') as mock_run:
             mock_run.return_value = "Bus 001 Device 005: ID 1d50:6089 OpenMoko, Inc. Great Scott Gadgets HackRF One SDR"
             from rflord import detect_device
-            assert detect_device() == "hackrf"
+            assert detect_device() == ["hackrf"]
 
     def test_rtlsdr_detected(self):
         with patch('rflord.run_cmd') as mock_run:
             mock_run.return_value = "Bus 001 Device 005: ID 0bda:2838 Realtek Semiconductor Corp. RTL2838"
             from rflord import detect_device
-            assert detect_device() == "rtlsdr"
+            assert detect_device() == ["rtlsdr"]
 
-    def test_no_device_returns_none(self):
+    def test_no_device_returns_empty(self):
         with patch('rflord.run_cmd') as mock_run:
             mock_run.return_value = "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub"
             from rflord import detect_device
-            assert detect_device() is None
+            assert detect_device() == []
 
-    def test_hackrf_takes_priority_over_rtlsdr(self):
+    def test_both_devices_detected(self):
         with patch('rflord.run_cmd') as mock_run:
             mock_run.return_value = (
                 "Bus 001 Device 005: ID 1d50:6089 OpenMoko HackRF\n"
                 "Bus 001 Device 006: ID 0bda:2838 Realtek RTL2838"
             )
             from rflord import detect_device
-            assert detect_device() == "hackrf"
+            assert detect_device() == ["hackrf", "rtlsdr"]
 
 
 class TestPortaPackSwitch:
@@ -117,7 +117,7 @@ class TestPortaPackSwitch:
 
             from rflord import detect_device
             result = detect_device()
-            assert result is None, f"Should return None when switch fails, got {result}"
+            assert result == [], f"Should return empty list when switch fails, got {result}"
 
 
 class TestRTLSDRSweep:

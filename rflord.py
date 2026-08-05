@@ -89,11 +89,12 @@ def run_cmd(cmd, timeout=60):
         return ""
 
 def detect_device():
+    """Detect available SDR devices. Returns list of device names."""
     lsusb = run_cmd("lsusb")
+    devices = []
     if "1d50:6018" in lsusb:
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         import serial
-        # Try BOTH ports — don't break after first successful open
         for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
             try:
                 print(f"  Trying {port}...", flush=True)
@@ -107,7 +108,6 @@ def detect_device():
                 s.read(s.in_waiting or 500)
                 s.close()
                 print(f"  Sent mode switch on {port}", flush=True)
-                # Check if switch worked before trying next port
                 time.sleep(2)
                 lsusb = run_cmd("lsusb")
                 if "1d50:6089" in lsusb:
@@ -116,7 +116,6 @@ def detect_device():
             except Exception as e:
                 print(f"  {port} failed: {e}", flush=True)
         else:
-            # Neither port worked — wait and retry
             time.sleep(5)
             lsusb = run_cmd("lsusb")
             if "1d50:6089" not in lsusb:
@@ -127,11 +126,12 @@ def detect_device():
                     lsusb = run_cmd("lsusb")
                 except: pass
     if "1d50:6089" in lsusb:
-        return "hackrf"
+        devices.append("hackrf")
     if "0bda:2838" in lsusb:
-        return "rtlsdr"
-    print(f"SDR not found. USB devices: {lsusb[:200]}", flush=True)
-    return None
+        devices.append("rtlsdr")
+    if not devices:
+        print(f"SDR not found. USB devices: {lsusb[:200]}", flush=True)
+    return devices
 
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
     cmd = f"/usr/bin/hackrf_sweep -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n} 2>/dev/null | grep '^[0-9]'"
@@ -1351,8 +1351,13 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     stdscr.refresh()
 
-def main_curses(stdscr, device):
+def main_curses(stdscr, devices):
     global INTERVAL, VOICE_THRESHOLD, _cursor_pos
+    if isinstance(devices, str):
+        devices = [devices]  # Backward compat
+    device = devices[0]  # Primary device
+    has_hackrf = "hackrf" in devices
+    has_rtlsdr = "rtlsdr" in devices
     
     # Setup curses
     curses.cbreak()
@@ -1380,7 +1385,7 @@ def main_curses(stdscr, device):
         if arg == "--threshold" and i + 2 <= len(sys.argv):
             VOICE_THRESHOLD = int(sys.argv[i + 2])
     
-    status = ["SDR Initialized: OK"]
+    status = [f"SDR Initialized: {', '.join(devices).upper()}"]
     draw_splash(stdscr, device, status)
     
     ensure_sink()
@@ -1470,7 +1475,7 @@ def main_curses(stdscr, device):
         except: pass
 
     # Reset HackRF once at startup
-    if device == "hackrf":
+    if has_hackrf:
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 
@@ -1478,33 +1483,92 @@ def main_curses(stdscr, device):
     _key_cmd = None
     stdscr.nodelay(True)
     stdscr.timeout(200)  # getch() returns -1 after 200ms
-    
+
+    # Determine scan assignment: which device scans which bands
+    def _assign_bands(bands, devices):
+        """Split bands between devices. HackRF takes high bands, RTL-SDR takes low bands."""
+        if len(devices) < 2:
+            return {devices[0]: bands}
+        # RTL-SDR: bands below 1000 MHz (good sensitivity at VHF/UHF)
+        # HackRF: bands above 1000 MHz (better at microwave)
+        rtlsdr_bands = [(f_lo, f_hi, bw, n) for f_lo, f_hi, bw, n in bands if f_hi <= 1000]
+        hackrf_bands = [(f_lo, f_hi, bw, n) for f_lo, f_hi, bw, n in bands if f_lo >= 1000]
+        # If no clean split, give HackRF everything and RTL-SDR the low half
+        if not hackrf_bands:
+            mid = len(bands) // 2
+            rtlsdr_bands = bands[:mid]
+            hackrf_bands = bands[mid:]
+        if not rtlsdr_bands:
+            rtlsdr_bands = hackrf_bands[:len(hackrf_bands)//2]
+            hackrf_bands = hackrf_bands[len(hackrf_bands)//2:]
+        assignment = {}
+        if "hackrf" in devices and hackrf_bands:
+            assignment["hackrf"] = hackrf_bands
+        if "rtlsdr" in devices and rtlsdr_bands:
+            assignment["rtlsdr"] = rtlsdr_bands
+        return assignment
+
     first_scan_done = False
     while True:
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
-        
-        
+
+
         all_signals = []
         h, w = stdscr.getmaxyx()
         scan_bands = accel.get_active_bands(bands) if accel else bands
-        for bi, (f_lo, f_hi, bw, n) in enumerate(scan_bands):
-            # Show scanning progress
-            try:
-                status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(scan_bands)})... "
-                stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
-                stdscr.refresh()
-            except: pass
-            # Check for quit between bands
-            key = _read_key(stdscr)
-            if key == 'quit':
-                _suppress_stop()
-                return
-            if device == "rtlsdr":
-                output = rtlsdr_sweep(f_lo, f_hi)
-            else:
-                output = hackrf_sweep(f_lo, f_hi, bw, n)
-            all_signals.extend(parse_sweep(output))
+
+        # Dual-SDR: scan in parallel with threads
+        band_assignment = _assign_bands(scan_bands, devices)
+
+        if len(band_assignment) > 1:
+            # Parallel scan with both SDRs
+            total_bands = sum(len(b) for b in band_assignment.values())
+            done = [0]
+            results = {}
+
+            def _scan_worker(dev, dev_bands, result_key):
+                sigs = []
+                for f_lo, f_hi, bw, n in dev_bands:
+                    try:
+                        status_line = f" [{dev.upper()}] {f_lo}-{f_hi} MHz "
+                        stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+                        stdscr.refresh()
+                    except: pass
+                    if dev == "rtlsdr":
+                        output = rtlsdr_sweep(f_lo, f_hi)
+                    else:
+                        output = hackrf_sweep(f_lo, f_hi, bw, n)
+                    sigs.extend(parse_sweep(output))
+                    done[0] += 1
+                results[result_key] = sigs
+
+            threads = []
+            for dev_i, (dev, dev_bands) in enumerate(band_assignment.items()):
+                t = threading.Thread(target=_scan_worker, args=(dev, dev_bands, dev_i), daemon=True)
+                threads.append(t)
+                t.start()
+            for t in threads:
+                t.join()
+            for sigs in results.values():
+                all_signals.extend(sigs)
+        else:
+            # Single SDR — sequential scan
+            for bi, (f_lo, f_hi, bw, n) in enumerate(scan_bands):
+                try:
+                    status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(scan_bands)})... "
+                    stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+                    stdscr.refresh()
+                except: pass
+                key = _read_key(stdscr)
+                if key == 'quit':
+                    _suppress_stop()
+                    return
+                if device == "rtlsdr":
+                    output = rtlsdr_sweep(f_lo, f_hi)
+                else:
+                    output = hackrf_sweep(f_lo, f_hi, bw, n)
+                all_signals.extend(parse_sweep(output))
         
         seen = {}
         unique = []
@@ -1678,7 +1742,7 @@ def main_curses(stdscr, device):
             elif key == 'suppress':
                 _show_suppress_menu(stdscr)
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
-                if any_active and device == "hackrf":
+                if any_active and has_hackrf:
                     _suppress_active = True
                     _suppress_start()
                 else:
@@ -1784,20 +1848,22 @@ def time_ago(timestamp):
 
 def main():
     # Detect device BEFORE curses takes over terminal
-    device = detect_device()
-    if not device:
+    devices = detect_device()
+    if not devices:
         print("No SDR device found.")
         sys.exit(1)
-    
+    device = devices[0]  # Primary device for backward compat
+    print(f"SDR devices: {', '.join(devices)}", flush=True)
+
     # Try curses first (proper terminal), fallback to ANSI
     try:
         if sys.stdout.isatty():
-            curses.wrapper(main_curses, device)
+            curses.wrapper(main_curses, devices)
         else:
             # Non-TTY: use ANSI mode
-            main_ansi(device)
+            main_ansi(devices)
     except Exception:
-        main_ansi(device)
+        main_ansi(devices)
 
 def main_ansi(device=None):
     """ANSI fallback mode for non-TTY or when curses fails."""
