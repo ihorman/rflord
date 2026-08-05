@@ -399,33 +399,46 @@ def in_legitimate_band(freq_mhz):
             return True
     return False
 
+_speaking = False
+
 def speak(text):
-    """Speak text via edge-tts with HAL 9000 effect. No timeout — let it play fully."""
+    """Speak text via edge-tts with HAL 9000 effect. Non-blocking — runs in daemon thread."""
+    global _speaking
+    if _speaking:
+        log.info(f"SPEAK SKIP (already speaking): {text[:60]}")
+        return
     log.info(f"SPEAK: {text[:100]}")
-    try:
-        raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
-        out = tempfile.mktemp(suffix='.wav', prefix='hal_')
-        r1 = subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
-                        "--text", text, "--write-media", raw],
-                       capture_output=True, timeout=60)
-        if r1.returncode != 0:
-            log.warning(f"TTS edge-tts failed: rc={r1.returncode} stderr={r1.stderr[:200]}")
-            return
-        if os.path.exists(raw):
-            r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
-            os.unlink(raw)
-            if r2.returncode != 0:
-                log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
+    def _speak_thread():
+        global _speaking
+        _speaking = True
+        try:
+            raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
+            out = tempfile.mktemp(suffix='.wav', prefix='hal_')
+            r1 = subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
+                            "--text", text, "--write-media", raw],
+                           capture_output=True, timeout=60)
+            if r1.returncode != 0:
+                log.warning(f"TTS edge-tts failed: rc={r1.returncode} stderr={r1.stderr[:200]}")
                 return
-            if os.path.exists(out):
-                r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
-                os.unlink(out)
-                if r3.returncode != 0:
-                    log.warning(f"TTS paplay failed: rc={r3.returncode} stderr={r3.stderr[:200]}")
-        else:
-            log.warning(f"TTS raw file not created: {raw}")
-    except Exception as e:
-        log.warning(f"TTS exception: {e}")
+            if os.path.exists(raw):
+                r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
+                os.unlink(raw)
+                if r2.returncode != 0:
+                    log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
+                    return
+                if os.path.exists(out):
+                    r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                    os.unlink(out)
+                    if r3.returncode != 0:
+                        log.warning(f"TTS paplay failed: rc={r3.returncode} stderr={r3.stderr[:200]}")
+            else:
+                log.warning(f"TTS raw file not created: {raw}")
+        except Exception as e:
+            log.warning(f"TTS exception: {e}")
+        finally:
+            _speaking = False
+    t = threading.Thread(target=_speak_thread, daemon=True, name="rflord-speak")
+    t.start()
 
 def _generate_noise(path, duration_s=10, rate=2000000):
     """Generate random IQ noise file for HackRF TX."""
@@ -1637,12 +1650,7 @@ def main_curses(stdscr, device):
             if sus_count > 0:
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
         
-        # Refresh table after voice (speak() blocks and curses screen goes stale)
-        # Clear and reset curses state to prevent corruption after long speak() calls
-        try:
-            stdscr.clear()
-            stdscr.refresh()
-        except: pass
+        # Refresh table after voice alerts
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
         
         # Wait with non-blocking key reads (200ms timeout per getch)
