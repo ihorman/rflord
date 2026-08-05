@@ -9,55 +9,83 @@ SPY_DEVICES = [
     (1200, 1300, "Hidden Camera 1.2GHz", "📹", 0),
     (2400, 2483, "Hidden Camera 2.4GHz", "📹", 0),
     (5725, 5875, "Hidden Camera 5.8GHz", "📹", 0),
-    
+    (5925, 7125, "WiFi 6E Camera 6GHz", "📹", 0),
+
     # FPV video transmitters (used in drones and spy cameras)
     (5645, 5945, "FPV Video TX 5.8GHz", "🎯", 1),
     (430, 450, "FPV Video TX 70cm", "🎯", 1),
     (1080, 1300, "FPV Video TX 1.2GHz", "🎯", 1),
-    
+
     # GPS trackers
     (1575, 1576, "GPS L1 Tracker", "📍", 1),
     (1227, 1228, "GPS L2 Tracker", "📍", 1),
     (1176, 1177, "GPS L5 Tracker", "📍", 1),
-    
+    (1575, 1576, "GLONASS L1 Tracker", "📍", 1),
+    (1602, 1609, "GLONASS L1 Tracker", "📍", 1),
+
     # GSM/LTE IMSI catchers (StingRay, cell-site simulators)
     (935, 960, "GSM IMSI Catcher", "📡", 0),
     (1805, 1880, "GSM 1800 IMSI Catcher", "📡", 0),
     (2110, 2170, "3G IMSI Catcher", "📡", 0),
     (2620, 2690, "LTE IMSI Catcher", "📡", 0),
-    
+    (869, 894, "CDMA IMSI Catcher", "📡", 0),
+    (791, 862, "LTE 800 IMSI Catcher", "📡", 0),
+    (2500, 2570, "LTE 2600 IMSI Catcher", "📡", 0),
+    (3400, 3800, "5G NR IMSI Catcher", "📡", 0),
+
     # Audio bugs / wiretaps
     (35, 45, "VHF Audio Bug", "🎙", 0),
     (72, 76, "VHF Audio Bug", "🎙", 0),
     (150, 174, "VHF Audio Bug", "🎙", 0),
     (400, 470, "UHF Audio Bug", "🎙", 0),
     (2400, 2483, "2.4GHz Audio Bug", "🎙", 0),
-    
-    # Bluetooth trackers (AirTag, Tile, etc.)
+    (88, 108, "FM Band Bug", "🎙", 0),
+    (108, 137, "Air Band Bug", "🎙", 0),
+
+    # Bluetooth trackers (AirTag, Tile, SmartTag, Flipper)
     (2402, 2480, "BT Tracker (AirTag/Tile)", "📎", 2),
-    
+
     # WiFi spy cameras
     (2412, 2462, "WiFi Spy Camera", "📷", 1),
     (5180, 5825, "WiFi 5GHz Spy Camera", "📷", 1),
-    
+    (5925, 7125, "WiFi 6E Spy Camera", "📷", 1),
+
+    # Flock Safety ALPR cameras (from AirHound)
+    (2400, 2483, "Flock Safety Camera", "📷", 0),
+    (5180, 5825, "Flock Safety Camera 5GHz", "📷", 0),
+
+    # Cell phone signal snoopers / IMSI catchers
+    (700, 800, "Cell Snooper 700MHz", "📱", 0),
+    (800, 900, "Cell Snooper 850MHz", "📱", 0),
+    (1700, 1800, "Cell Snooper 1700MHz", "📱", 0),
+    (1900, 2000, "Cell Snooper 1900MHz", "📱", 0),
+
+    # RF signal jammers
+    (800, 960, "Cell Jammer", "🚫", 0),
+    (1800, 1900, "Cell Jammer DCS", "🚫", 0),
+    (2100, 2200, "3G Jammer", "🚫", 0),
+    (2400, 2500, "WiFi/Drone Jammer", "🚫", 0),
+    (1570, 1580, "GPS Jammer", "🚫", 0),
+    (1200, 1300, "GPS L2 Jammer", "🚫", 0),
+
     # Radar detectors / speed cameras
     (10500, 10550, "X-band Radar", "🚨", 2),
     (24050, 24250, "K-band Radar", "🚨", 2),
     (33400, 36000, "Ka-band Radar", "🚨", 2),
-    
+
     # Keyloggers / RF emanations
     (0, 30, "Keylogger RF Emission", "⌨", 0),
-    
+
     # Satellite phones (could be used for covert comms)
     (1616, 1626, "Iridium Sat Phone", "🛰", 2),
     (1980, 2010, "Inmarsat Sat Phone", "🛰", 2),
     (1626, 1660, "Globalstar Sat Phone", "🛰", 2),
-    
+
     # Covert video links
     (1700, 1900, "Covert Video Link", "🎥", 0),
     (2200, 2300, "Covert Video Link", "🎥", 0),
     (3000, 3500, "Covert Video Link S-band", "🎥", 0),
-    
+
     # Drones
     (900, 928, "Drone Control 900MHz", "🛸", 1),
     (2400, 2483, "Drone Control 2.4GHz", "🛸", 1),
@@ -73,6 +101,28 @@ SPY_DEVICES = [
     (2400, 2483, "FrSky ACCESS", "🛸", 1),
     (5725, 5875, "HDZero Digital FPV", "🛸", 1),
     (5725, 5875, "Walksnail Avatar", "🛸", 1),
+
+    # Raven acoustic sensors (ShotSpotter) — from AirHound
+    (2400, 2483, "Raven Acoustic Sensor", "🔫", 1),
+
+    # Flipper Zero — hacking multi-tool (from AirHound)
+    (2402, 2480, "Flipper Zero", "🔧", 2),
+
+    # Wireless microphone systems (covert audio)
+    (174, 216, "Wireless Mic VHF", "🎙", 0),
+    (470, 698, "Wireless Mic UHF", "🎙", 0),
+    (1785, 1805, "DECT Phone Bug", "🎙", 0),
+    (1880, 1900, "DECT Phone Bug", "🎙", 0),
+
+    # Zigbee/Z-Wave smart home surveillance
+    (2400, 2483, "Zigbee Device", "🏠", 2),
+    (868, 868, "Z-Wave EU Device", "🏠", 2),
+    (908, 916, "Z-Wave US Device", "🏠", 2),
+
+    # LoRa surveillance devices
+    (868, 870, "LoRa Device EU", "📡", 2),
+    (902, 928, "LoRa Device US", "📡", 2),
+    (433, 434, "LoRa Device 433MHz", "📡", 2),
 ]
 
 # Icon mapping for signal types
@@ -99,6 +149,16 @@ SIGNAL_ICONS = {
     "WiFi/BT": "📶",
     "WiFi/FPV": "📶",
     "Keyfob": "🔑",
+    "Flock": "📷",
+    "Raven": "🔫",
+    "Flipper": "🔧",
+    "Jammer": "🚫",
+    "IMSI": "📡",
+    "Tracker": "📍",
+    "Zigbee": "🏠",
+    "Z-Wave": "🏠",
+    "LoRa": "📡",
+    "DECT": "🎙",
 }
 
 import unicodedata

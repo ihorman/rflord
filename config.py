@@ -46,7 +46,7 @@ DEFAULTS = {
         'path': '~/.local/share/rflord/exports/',
     },
     'web': {
-        'enabled': False,
+        'enabled': True,
         'port': 8080,
     },
     'blacklist': {

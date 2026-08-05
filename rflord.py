@@ -1200,7 +1200,7 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.clrtobot()
     stdscr.refresh()
 
-def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None):
+def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     global _cursor_pos, _cursor_active
     if known_freqs is None:
@@ -1235,7 +1235,15 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         stdscr.addstr(row, 0, (header[:w-1]).ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
     row += 1
-    
+
+    # Web dashboard URL line
+    if web_url:
+        url_line = f" Web Dashboard: {web_url}"
+        try:
+            stdscr.addstr(row, 0, (url_line[:w-1]).ljust(w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+        except: pass
+        row += 1
+
     # Column titles
     try:
         stdscr.addstr(row, 0, f" {'SUSPICIOUS':^{mid-2}}"[:mid-1], curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
@@ -1372,12 +1380,26 @@ def main_curses(stdscr, device):
         history.init_db()
     accel = ScanAccelerator(_cfg.get('scan_acceleration', {}).get('skip_after_empty', 3)) if _cfg.get('scan_acceleration', {}).get('enabled', False) else None
     web_dash = None
+    web_url = None
     if _cfg.get('web', {}).get('enabled', False):
         try:
             from web import WebDashboard
-            web_dash = WebDashboard(port=_cfg['web']['port'])
+            web_port = _cfg['web']['port']
+            web_dash = WebDashboard(port=web_port)
             web_dash.start()
-        except Exception: pass
+            # Get device IP for URL display
+            try:
+                import socket
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                ip = s.getsockname()[0]
+                s.close()
+                web_url = f"http://{ip}:{web_port}"
+            except:
+                web_url = f"http://localhost:{web_port}"
+            log.info(f"Web dashboard: {web_url}")
+        except Exception as e:
+            log.warning(f"Web dashboard failed: {e}")
     # State persistence
     state_file = os.path.expanduser('~/.local/share/rflord/state.json')
     os.makedirs(os.path.dirname(state_file), exist_ok=True)
@@ -1527,7 +1549,7 @@ def main_curses(stdscr, device):
         if not first_scan_done:
             stdscr.clear()
             stdscr.refresh()
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
         
         # Update splash status after first scan
         if not first_scan_done:
@@ -1621,7 +1643,7 @@ def main_curses(stdscr, device):
             stdscr.clear()
             stdscr.refresh()
         except: pass
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
         
         # Wait with non-blocking key reads (200ms timeout per getch)
         wait_end = time.time() + INTERVAL
@@ -1634,17 +1656,17 @@ def main_curses(stdscr, device):
                 break
             elif key == 'mute':
                 voice_enabled = not voice_enabled
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'voice':
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             elif key == 'interval_up':
                 INTERVAL = min(600, INTERVAL + 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'interval_down':
                 INTERVAL = max(30, INTERVAL - 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'suppress':
                 _show_suppress_menu(stdscr)
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
@@ -1654,19 +1676,19 @@ def main_curses(stdscr, device):
                 else:
                     _suppress_active = False
                     _suppress_stop()
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'cursor_up':
                 _cursor_pos = max(0, _cursor_pos - 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'cursor_down':
                 # Get current suspicious count
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
                 _cursor_pos = min(len(sus_grp) - 1, _cursor_pos + 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'cursor_off':
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'details':
                 # Get the selected signal from suspicious list
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
@@ -1676,7 +1698,7 @@ def main_curses(stdscr, device):
                     # Get the strongest signal in the group
                     g = sus_grp[_cursor_pos]
                     _show_signal_detail(stdscr, g['_strongest'], artemis_db)
-                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'export':
                 export_dir = os.path.expanduser(_cfg['export']['path'])
                 os.makedirs(export_dir, exist_ok=True)
@@ -1687,13 +1709,13 @@ def main_curses(stdscr, device):
                     export_csv(filepath, unique)
                 else:
                     export_json(filepath, unique)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'log':
                 _show_log_view(stdscr)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
             elif key == 'history':
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
