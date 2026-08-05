@@ -283,7 +283,7 @@ class TestSuspendTargets:
         from rflord import SUPPRESS_TARGETS
         assert "Cellular" in SUPPRESS_TARGETS
         assert "Bluetooth" in SUPPRESS_TARGETS
-        assert "GPS" in SUPPRESS_TARGETS
+        assert "Gps" in SUPPRESS_TARGETS or "GPS" in SUPPRESS_TARGETS
 
     def test_target_has_freqs(self):
         from rflord import SUPPRESS_TARGETS

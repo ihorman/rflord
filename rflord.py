@@ -22,6 +22,7 @@ import glob
 import curses
 import select
 import threading
+from datetime import datetime
 from spy_db import identify_spy_device, get_signal_icon, get_threat_icon, pad_icon
 from config import load_config
 from history import SignalHistory
@@ -517,8 +518,8 @@ def _show_suppress_menu(stdscr):
         stdscr.timeout(-1)
         key = stdscr.getch()
         stdscr.nodelay(True)
-        stdscr.timeout(100)
-        
+        stdscr.timeout(200)
+
         if key == curses.KEY_UP and cursor > 0:
             cursor -= 1
         elif key == curses.KEY_DOWN and cursor < len(options) - 1:
@@ -615,8 +616,8 @@ def _show_signal_detail(stdscr, signal, artemis_db):
         stdscr.timeout(-1)
         key = stdscr.getch()
         stdscr.nodelay(True)
-        stdscr.timeout(100)
-        
+        stdscr.timeout(200)
+
         if key in (ord('d'), ord('D'), 27, 10, 13):  # d, ESC, Enter
             return
         elif key == ord('e') or key == ord('E'):
@@ -646,6 +647,185 @@ def _show_signal_detail(stdscr, signal, artemis_db):
                     stdscr.refresh()
                     time.sleep(1.5)
                 except: pass
+
+def _show_log_view(stdscr):
+    """Show recent log entries in a popup."""
+    h, w = stdscr.getmaxyx()
+    log_path = os.path.join(LOG_DIR, 'rflord.log')
+    lines = []
+    try:
+        with open(log_path, 'r') as f:
+            all_lines = f.readlines()
+            # Show last 30 lines, fit to screen width
+            for ln in all_lines[-30:]:
+                lines.append(ln.rstrip()[:w-4])
+    except FileNotFoundError:
+        lines = ["No log file found."]
+    except Exception as ex:
+        lines = [f"Error reading log: {ex}"]
+
+    if not lines:
+        lines = ["Log is empty."]
+
+    # Build popup
+    pw = min(w - 2, max(60, max(len(l) for l in lines) + 4))
+    ph = min(h - 2, len(lines) + 5)
+    py = max(0, (h - ph) // 2)
+    px = max(0, (w - pw) // 2)
+    scroll = max(0, len(lines) - (ph - 4))  # Start at bottom
+
+    while True:
+        # Draw popup background
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        try:
+            title = " SYSTEM LOG (last 30 entries) "
+            stdscr.addstr(py, px + max(0, (pw - len(title)) // 2), title, curses.color_pair(CP_SUS_YEL) | curses.A_BOLD)
+            stdscr.addstr(py + 1, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+        except: pass
+
+        # Show visible lines
+        visible = ph - 4
+        for i in range(visible):
+            idx = scroll + i
+            if idx < len(lines):
+                try:
+                    stdscr.addstr(py + 2 + i, px + 1, lines[idx][:pw-2], curses.color_pair(CP_DIM))
+                except: pass
+
+        try:
+            stdscr.addstr(py + ph - 2, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+            stdscr.addstr(py + ph - 1, px + 2, " ↑↓:Scroll  ESC/l:Close ", curses.color_pair(CP_DIM))
+        except: pass
+
+        stdscr.refresh()
+
+        # Input
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        key = stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(200)
+
+        if key in (ord('l'), ord('L'), 27, 10, 13):
+            return
+        elif key == curses.KEY_UP and scroll > 0:
+            scroll -= 1
+        elif key == curses.KEY_DOWN and scroll < max(0, len(lines) - visible):
+            scroll += 1
+
+def _show_history_view(stdscr, cursor_pos, signals, artemis_db, history):
+    """Show signal history for the currently selected suspicious signal."""
+    h, w = stdscr.getmaxyx()
+
+    if not history:
+        # Show "no history" popup
+        msg = "Signal history is disabled in config."
+        pw = len(msg) + 6
+        ph = 5
+        py = max(0, (h - ph) // 2)
+        px = max(0, (w - pw) // 2)
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        try:
+            stdscr.addstr(py + 1, px + 2, msg, curses.color_pair(CP_SUS_YEL))
+            stdscr.addstr(py + 3, px + 2, " Press any key ", curses.color_pair(CP_DIM))
+        except: pass
+        stdscr.refresh()
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(200)
+        return
+
+    # Find the signal at cursor position
+    sus_list = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                      key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+    sus_grp = group_suspicious(sus_list, artemis_db)
+
+    if not (0 <= cursor_pos < len(sus_grp)):
+        msg = "No suspicious signal selected."
+        pw = len(msg) + 6
+        ph = 5
+        py = max(0, (h - ph) // 2)
+        px = max(0, (w - pw) // 2)
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        try:
+            stdscr.addstr(py + 1, px + 2, msg, curses.color_pair(CP_SUS_YEL))
+            stdscr.addstr(py + 3, px + 2, " Press any key ", curses.color_pair(CP_DIM))
+        except: pass
+        stdscr.refresh()
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(200)
+        return
+
+    g = sus_grp[cursor_pos]
+    freq_mhz = g['freq'] / 1e6
+    history_rows = history.get_history(freq_mhz, days=7)
+
+    lines = [f"  History for {freq_mhz:.1f} MHz (last 7 days)", ""]
+    if not history_rows:
+        lines.append("  No history recorded yet.")
+    else:
+        lines.append(f"  {'Time':20s} {'Peak':>8s} {'Avg':>8s} {'Std':>6s} {'Class':8s}")
+        lines.append(f"  {'─'*20} {'─'*8} {'─'*8} {'─'*6} {'─'*8}")
+        for r in history_rows[:25]:
+            ts = datetime.fromtimestamp(r.get('scan_time', r.get('last_seen', 0)))
+            time_str = ts.strftime('%Y-%m-%d %H:%M')
+            peak = r.get('peak_dbfs', 0)
+            avg = r.get('avg_dbfs', 0)
+            std = r.get('std', 0)
+            cls = r.get('classification', '?')
+            lines.append(f"  {time_str:20s} {peak:>+7.1f} {avg:>+7.1f} {std:>5.1f} {cls:8s}")
+
+    # Build popup
+    pw = min(w - 2, max(60, max(len(l) for l in lines) + 4))
+    ph = min(h - 2, len(lines) + 5)
+    py = max(0, (h - ph) // 2)
+    px = max(0, (w - pw) // 2)
+
+    while True:
+        for y in range(ph):
+            try:
+                stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
+            except: pass
+        try:
+            title = f" SIGNAL HISTORY — {freq_mhz:.1f} MHz "
+            stdscr.addstr(py, px + max(0, (pw - len(title)) // 2), title, curses.color_pair(CP_SUS_YEL) | curses.A_BOLD)
+            stdscr.addstr(py + 1, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+        except: pass
+
+        for i, line in enumerate(lines[1:]):
+            try:
+                stdscr.addstr(py + 2 + i, px + 1, line[:pw-2], curses.color_pair(CP_DIM))
+            except: pass
+
+        try:
+            stdscr.addstr(py + ph - 2, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
+            stdscr.addstr(py + ph - 1, px + 2, " ESC/h:Close ", curses.color_pair(CP_DIM))
+        except: pass
+
+        stdscr.refresh()
+
+        stdscr.nodelay(False)
+        stdscr.timeout(-1)
+        key = stdscr.getch()
+        stdscr.nodelay(True)
+        stdscr.timeout(200)
+
+        if key in (ord('h'), ord('H'), 27, 10, 13):
+            return
 
 def _read_key(stdscr):
     """Read one key from curses. Returns command string or None."""
@@ -1161,6 +1341,8 @@ def main_curses(stdscr, device):
     # Initialize new modules
     blacklist = load_blacklist(_cfg.get('blacklist', {}).get('file'))
     history = SignalHistory(_cfg['history']['db_path']) if _cfg['history']['enabled'] else None
+    if history:
+        history.init_db()
     accel = ScanAccelerator(_cfg.get('scan_acceleration', {}).get('skip_after_empty', 3)) if _cfg.get('scan_acceleration', {}).get('enabled', False) else None
     web_dash = None
     if _cfg.get('web', {}).get('enabled', False):
@@ -1472,6 +1654,12 @@ def main_curses(stdscr, device):
                     export_csv(filepath, unique)
                 else:
                     export_json(filepath, unique)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'log':
+                _show_log_view(stdscr)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
+            elif key == 'history':
+                _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled)
 
 # === LOGGING WITH WEEKLY ROTATION ===
