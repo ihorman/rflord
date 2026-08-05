@@ -1274,7 +1274,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     # Sub-headers
     try:
-        stdscr.addstr(row, 0, "!    Freq  Pwr   Std  Dist  Type           Desc"[:mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, f"!    {'Freq':>5} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Type':<14} Desc"[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
         stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
     except: pass
