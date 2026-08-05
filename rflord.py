@@ -872,13 +872,26 @@ def _read_key(stdscr):
 def ensure_sink():
     try:
         r = subprocess.run(["pactl", "list", "sinks", "short"], capture_output=True, text=True, timeout=3)
-        if "auto_null" in r.stdout and "alsa_output" not in r.stdout:
+        sinks = r.stdout.strip()
+        # If we have a real audio sink, make it default
+        if "auto_null" in sinks:
+            # Find the real sink name
+            for line in sinks.split('\n'):
+                parts = line.split('\t')
+                if len(parts) >= 2 and 'auto_null' not in parts[1]:
+                    sink_name = parts[1]
+                    subprocess.run(["pactl", "set-default-sink", sink_name],
+                                   capture_output=True, timeout=3)
+                    log.info(f"Audio: set default sink to {sink_name}")
+                    return
+            # No real sink found — try to load ALSA
             subprocess.run(["pactl", "load-module", "module-alsa-sink", "device=hw:0,0"],
                            capture_output=True, timeout=3)
-            subprocess.run(["pactl", "set-default-sink", "alsa_output.hw:0,0"],
-                           capture_output=True, timeout=3)
-    except:
-        pass
+        # Verify current default
+        r2 = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True, timeout=3)
+        log.info(f"Audio: default sink = {r2.stdout.strip()}")
+    except Exception as e:
+        log.warning(f"ensure_sink exception: {e}")
 
 def load_artemis():
     db = []
@@ -1023,10 +1036,15 @@ def play_voice_sample(freq_mhz):
         freq_hz = int(freq_mhz * 1e6)
         raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
         wav = tempfile.mktemp(suffix='.wav', prefix='voice_')
-        subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
+        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ...")
+        r = subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
                         "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
                        capture_output=True, timeout=10)
+        if r.returncode != 0:
+            log.warning(f"VOICE CAPTURE FAIL: hackrf_transfer rc={r.returncode} stderr={r.stderr[:200]}")
+            return
         if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
+            log.warning(f"VOICE CAPTURE FAIL: raw file missing or too small ({os.path.getsize(raw) if os.path.exists(raw) else 0} bytes)")
             return
         import numpy as np
         data = np.fromfile(raw, dtype=np.int8)
@@ -1056,22 +1074,31 @@ def play_voice_sample(freq_mhz):
             w.setframerate(target_rate)
             w.writeframes(audio_16.tobytes())
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
-        log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}")
+        log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}, playing audio...")
         save_decoded_audio(freq_mhz, wav, sig_type)
         ensure_sink()
-        subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        if r2.returncode != 0:
+            log.warning(f"VOICE PLAY FAIL: paplay rc={r2.returncode} stderr={r2.stderr[:200]}")
+        else:
+            log.info(f"VOICE PLAY OK: {freq_mhz:.1f} MHz")
         os.unlink(wav)
-    except:
-        pass
+    except Exception as e:
+        log.warning(f"VOICE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
 
 def try_voice_decode(freq_mhz):
     try:
         scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
         cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
+        log.info(f"VOICE DECODE: running {cmd}")
         r = run_cmd(cmd, timeout=15)
+        log.info(f"VOICE DECODE: result={r[:200] if r else '(empty)'}")
         is_voice_band = (88 <= freq_mhz <= 108) or (108 <= freq_mhz <= 137) or (150 <= freq_mhz <= 174) or (400 <= freq_mhz <= 470)
         if is_voice_band:
+            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz is in voice band, playing sample")
             play_voice_sample(freq_mhz)
+        else:
+            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz NOT in voice band (skip play)")
         if "DMR" in r: return "DMR digital voice"
         if "D-STAR" in r: return "D-STAR ham radio"
         if "NFM" in r and "Power" in r:
@@ -1080,8 +1107,8 @@ def try_voice_decode(freq_mhz):
         if "POCSAG" in r: return "POCSAG pager"
         if "DTMF" in r: return "DTMF tones"
         if "Morse" in r: return "Morse code"
-    except:
-        pass
+    except Exception as e:
+        log.warning(f"VOICE DECODE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
     return None
 
 def signal_priority(freq_mhz, std):
@@ -1517,9 +1544,10 @@ def main_curses(stdscr, device):
         
         # Voice alert
         if new_suspicious and voice_enabled:
-            log.info(f"Voice alert: {len(new_suspicious)} new suspicious signals")
+            log.info(f"Voice alert: {len(new_suspicious)} new suspicious, threshold={VOICE_THRESHOLD}")
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
+            log.info(f"Voice: {len(above_threshold)} above threshold {VOICE_THRESHOLD} dBFS")
             
             if above_threshold:
                 announcements = []
@@ -1588,6 +1616,11 @@ def main_curses(stdscr, device):
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
         
         # Refresh table after voice (speak() blocks and curses screen goes stale)
+        # Clear and reset curses state to prevent corruption after long speak() calls
+        try:
+            stdscr.clear()
+            stdscr.refresh()
+        except: pass
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history)
         
         # Wait with non-blocking key reads (200ms timeout per getch)
