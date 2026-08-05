@@ -150,21 +150,21 @@ class TestTableFormatting:
 
     def test_left_column_alignment(self):
         """Left table header columns must align with data columns."""
-        header = "!    Freq  Pwr    Std   Dist  Type           Desc"
+        header = "!    Freq  Pwr   Std  Dist  Type           Desc"
         # Data format: cursor(1)+sev(3)+' '+freq(5)+' '+peak(5)+' '+std(4)+' '+dist(5)+' '+type(14)+' '+remark
         data = f" {'!! '} {680.0:>5.1f} {-30.0:>+5.1f} {2.5:>4.1f} {333:>5} {'Tetrapol':<14} Tetrapol"
-        # Check that header labels align with data value positions
+        # Check that header labels align with data field positions
         assert header[0] == "!", "Sev at pos 0"
-        assert "680.0" in data[5:10], "Freq value in data[5:10]"
-        assert "Freq" in header[5:9], "Freq label in header[5:9]"
-        assert "-30.0" in data[11:16], "Pwr value in data[11:16]"
-        assert "Pwr" in header[11:14], "Pwr label in header[11:14]"
-        assert "2.5" in data[17:21], "Std value in data[17:21]"
-        assert "Std" in header[18:21], "Std label in header[18:21]"
-        assert "333" in data[22:27], "Dist value in data[22:27]"
-        assert "Dist" in header[24:28], "Dist label in header[24:28]"
-        assert "Tetrapol" in data[28:42], "Type value in data[28:42]"
-        assert "Type" in header[30:34], "Type label in header[30:34]"
+        assert header[5:9] == "Freq", "Freq label at pos 5"
+        assert data[5:10] == "680.0", "Freq value at pos 5"
+        assert header[11:14] == "Pwr", "Pwr label at pos 11"
+        assert data[11:16] == "-30.0", "Pwr value at pos 11"
+        assert header[17:20] == "Std", "Std label at pos 17"
+        assert data[17:21] == " 2.5", "Std value at pos 17"
+        assert header[22:26] == "Dist", "Dist label at pos 22"
+        assert data[22:27] == "  333", "Dist value at pos 22"
+        assert header[28:32] == "Type", "Type label at pos 28"
+        assert data[28:42].startswith("Tetrapol"), "Type value at pos 28"
 
     def test_footer_fits_width(self):
         """Footer with hotkey hints should fit in 80-char terminal."""
