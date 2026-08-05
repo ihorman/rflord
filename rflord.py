@@ -29,6 +29,7 @@ from history import SignalHistory
 from export import export_csv, export_json
 from blacklist import load_blacklist, filter_blacklisted
 from scan_accel import ScanAccelerator
+from rf_protocols import identify_by_freq as rfproto_identify, get_protocol_count as rfproto_count
 
 # Load config
 _cfg = load_config()
@@ -582,6 +583,13 @@ def _show_signal_detail(stdscr, signal, artemis_db):
             lines.append(f"  Modulation:   {art['modulation']}")
         if art.get('country'):
             lines.append(f"  Country:      {art['country']}")
+
+    # RF Protocol Database lookup
+    protos = rfproto_identify(f, tolerance_mhz=0.5)
+    if protos:
+        lines.append(f"  RF Protocols: {len(protos)} match(es)")
+        for p in protos[:3]:
+            lines.append(f"    {p['name'][:40]} ({p['category'][:20]})")
     
     if spy_name:
         lines.append(f"  Spy Device:   {spy_icon} {spy_name}")
@@ -1444,8 +1452,9 @@ def main_curses(stdscr, devices):
         from drone_rf_db import DRONE_SIGNATURES
         drone_count = len(DRONE_SIGNATURES)
     except: drone_count = 0
-    total = db_count + spy_count + drone_count
-    status.append(f"Signatures databases loaded: OK ({total} total: {db_count} Artemis, {spy_count} spy, {drone_count} drone)")
+    proto_count = rfproto_count()
+    total = db_count + spy_count + drone_count + proto_count
+    status.append(f"Signatures databases loaded: OK ({total} total: {db_count} Artemis, {spy_count} spy, {drone_count} drone, {proto_count} RF protocols)")
     status.append("Initial scan & analysis: in progress")
     draw_splash(stdscr, device, status)
     
