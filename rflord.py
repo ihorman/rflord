@@ -33,7 +33,7 @@ from rf_protocols import identify_by_freq as rfproto_identify, get_protocol_coun
 
 # Load config
 _cfg = load_config()
-VERSION = "v0.6.5"
+VERSION = "v0.7.0"
 _key_cmd = None
 INTERVAL = _cfg['scan']['interval']
 
@@ -1870,7 +1870,8 @@ def main():
         else:
             # Non-TTY: use ANSI mode
             main_ansi(devices)
-    except Exception:
+    except Exception as e:
+        print(f"Curses failed: {e}", flush=True)
         main_ansi(devices)
 
 def main_ansi(device=None):
