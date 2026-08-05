@@ -32,7 +32,7 @@ from scan_accel import ScanAccelerator
 
 # Load config
 _cfg = load_config()
-VERSION = "v0.6.2"
+VERSION = "v0.6.4"
 _key_cmd = None
 INTERVAL = _cfg['scan']['interval']
 
