@@ -1,189 +1,223 @@
-# 📡 RF Lord — RF Spectrum Monitor
+<p align="center">
+  <img src="logo.png" alt="RFLord" width="200">
+</p>
 
-Real-time RF spectrum monitoring with drone detection, voice alerts, and signal analysis. Built for HackRF One and RTL-SDR.
+<h1 align="center">RFLord</h1>
 
-**Author: Ihor Kolodyuk**
+<p align="center">
+  <b>Real-time RF Spectrum Monitor with Unified Threat Assessment</b><br>
+  <sub>WiFi + BLE + RF signal detection · Rule engine · Voice alerts · Web dashboard</sub>
+</p>
 
-## Features
+<p align="center">
+  <img src="https://img.shields.io/badge/version-v0.7.0-e94560?style=flat-square" alt="Version">
+  <img src="https://img.shields.io/badge/tests-150%20passed-6bff6b?style=flat-square" alt="Tests">
+  <img src="https://img.shields.io/badge/signatures-1,355-ffd166?style=flat-square" alt="Signatures">
+  <img src="https://img.shields.io/badge/license-MIT-blue?style=flat-square" alt="License">
+</p>
 
-- **Live spectrum table** — split-screen: suspicious left, known signals right, grouped by type
-- **Signal grouping** — same-type signals merged with count, strongest power, nearest distance
-- **Drone detection** — 45 RF signatures (DJI OcuSync/O3/O4, HDZero, Walksnail, ELRS, Crossfire, analog FPV)
-- **Voice alerts** — TTS HAL 9000 voice with signal type + distance announcements
-- **Signal classification** — Artemis 3 database (432 signatures) + spy database (47) + drone database (45)
-- **Suppress mode** — HackRF TX jammer for Cellular, Bluetooth, GPS (hotkey: s)
-- **Distance estimation** — FSPL-based distance calculation per signal type
-- **Hotkeys** — main-loop getch with 200ms timeout for q/r/m/v/s/+/- (no background thread)
-- **RTL-SDR support** — auto-detects HackRF or RTL-SDR, adapts scan method
-- **Voice decoding** — DSD (DMR, D-STAR, NXDN), multimon-ng (POCSAG, DTMF, Morse)
-- **Duty scan mode** — continuous monitoring with configurable interval
+---
 
-## Quick Start
+## What is RFLord?
+
+RFLord is a real-time RF spectrum monitor for the ClockworkPi uConsole with HackRF One and/or RTL-SDR. It scans all bands, identifies signals using multiple databases, and provides unified threat assessments by combining RF, WiFi, and BLE signals through a boolean rule engine.
+
+### Key Features
+
+- **Dual-SDR parallel scanning** — HackRF + RTL-SDR simultaneously, ~50% faster
+- **Unified rule engine** — combines RF, WiFi, and BLE signals into named threat detections
+- **1,355 signatures** across 5 databases (Artemis, spy devices, drones, RF protocols, AirHound)
+- **Voice alerts** — HAL 9000 TTS voice announcing threats (threaded, non-blocking)
+- **Web dashboard** — live signal stream via Flask SSE on port 8080
+- **Signal history** — SQLite-backed trend tracking with `l` (log) and `h` (history) views
+- **Export** — CSV/JSON export of scan results
+- **Suppress mode** — jam cellular/Bluetooth/GPS bands with HackRF TX
+
+## Screenshots
+
+```
+ RfLord v0.7.0 14:32:15 │ Up 00:05:23 │ Alerts 12 │ Tracked 45 │ Sig 838
+ Web Dashboard: http://192.168.0.214:8080
+ 🔴 Threats detected: Flock Safety Camera [wifi+ble] (100%) — ALPR camera
+                         SUSPICIOUS                                     KNOWN SIGNALS
+!      Freq   Pwr  Std  Dist Type           Desc    Cnt    Pwr  Dist  Bnd Type
+ ─────────────────────────────────────────────────── ──────────────────────────────
+ !!  680.0 -30.0  2.5  333m Tetrapol      Tetrapol  x152  -21.0  29m   5G 802.11n
+ !!  433.0 -12.7  3.2  520m Link-11       Link-11    x76  -31.6 346m    L CDMA2000
+ !   140.5 -11.5  4.9  807m Kiwi          Kiwi       x42  -25.5 256m    ? 3G WCDMA
+ ─────────────────────────────────────────────────── ──────────────────────────────
+ q:Quit  r:Rescan  v:Voice  m:Mute  s:Suppress  ↑↓:Navigate  d:Detail  e:Export
+```
+
+## Hotkeys
+
+| Key | Action |
+|-----|--------|
+| `q` | Quit |
+| `r` | Force rescan |
+| `v` | Voice: speak current status |
+| `m` | Mute/unmute voice alerts |
+| `s` | Suppress mode (jam selected bands) |
+| `+`/`-` | Increase/decrease scan interval |
+| `↑`/`↓` | Navigate suspicious signals |
+| `d` | Signal detail popup |
+| `e` | Export current scan to CSV/JSON |
+| `l` | View system log |
+| `h` | View signal history |
+| `ESC` | Deactivate cursor |
+
+## Installation
 
 ```bash
-# Install dependencies
-sudo apt-get install -y hackrf rtl-sdr dsdcc multimon-ng sox
-pip3 install edge-tts numpy
-
 # Clone
 git clone https://github.com/ihorman/rflord.git
 cd rflord
 
-# Run the monitor
+# Dependencies
+pip3 install flask numpy
+
+# Build signature database
+python3 build_signatures_db.py
+
+# Run
 python3 rflord.py
-
-# Or with custom interval
-python3 rflord.py --interval 60
 ```
 
-## Usage
+### Hardware Requirements
 
-### Clean Table Monitor (rflord)
-
-```bash
-# Default — full scan, 120s interval, voice alerts
-python3 rflord.py
-
-# Faster updates
-python3 rflord.py --interval 60
-
-# Install as system command
-sudo cp rflord.py /usr/local/bin/rflord
-sudo chmod +x /usr/local/bin/rflord
-rflord --interval 60
-```
-
-### Full Scanner (scanner.py)
-
-```bash
-# Single scan with full report
-python3 scanner.py --focus full
-
-# Camera-focused scan (900 MHz, 1.2 GHz, 2.4 GHz, 5.8 GHz)
-python3 scanner.py --focus cameras
-
-# Continuous duty monitoring
-python3 scanner.py --duty --interval 120
-
-# Specific frequency range
-python3 scanner.py --band 2400:2500
-
-# Force device
-python3 scanner.py --device hackrf
-python3 scanner.py --device rtlsdr
-```
-
-### Voice Decoder
-
-```bash
-# Decode voice at frequency
-python3 voice_decode.py scan 155.0         # Auto-detect mode
-python3 voice_decode.py scan 130.0 --mode am   # AM (air band)
-python3 voice_decode.py scan 446.0 --mode dmr  # DMR digital
-python3 voice_decode.py scan 446.0 --mode pocsag  # POCSAG pagers
-```
-
-### FPV Video Decode
-
-```bash
-# Capture and decode FPV video
-python3 fpv_decode.py capture --freq 5800 --standard NTSC --output frame.png
-python3 fpv_decode.py capture --freq 1280 --standard PAL --spectrogram --output frame.png
-```
-
-## Color Coding
-
-| Color | Meaning |
-|-------|---------|
-| 🔴 RED | Top 3 strongest suspicious signals |
-| 🟡 YELLOW | Other suspicious signals |
-| 🟢 GREEN | Known/identified signals |
-| 🟣 MAGENTA | Drone activity detected |
-| ⚡ CW | Continuous carrier (possible beacon) |
-
-## Signal Types
-
-| Code | Description |
-|------|-------------|
-| DP/USB | DisplayPort/USB interference harmonic |
-| USB-noise | USB 2.0 clock noise (480 MHz harmonics) |
-| DAB | Digital Audio Broadcasting |
-| CW | Continuous wave carrier |
-| TETRA | Public safety radio |
-| WiFi/BT | WiFi or Bluetooth |
-| Digital | Digital modulation (bursty) |
-| Analog | Analog signal |
+- ClockworkPi uConsole (CM4/CM5)
+- HackRF One SDR (primary, wideband)
+- RTL-SDR v3/v4 (optional, parallel UHF/VHF scanning)
 
 ## Architecture
 
+### Rule Engine
+
+RFLord uses a boolean rule engine (modeled after [AirHound](https://github.com/dougborg/AirHound)) to combine signals from multiple sources into named threat detections:
+
 ```
-rflord.py          — Clean table monitor (main UI)
-scanner.py         — Full scanner with detailed reports
-drone_rf_db.py     — Drone RF signature database (45 signatures)
-drone_dsp.py       — Drone signal DSP analysis (OFDM detection)
-voice_decode.py    — Voice decoder (DSD + multimon-ng)
-rf_analysis.py     — Distance estimation + territory classification
-fpv_decode.py      — FPV video frame decoder
-tv_capture.py      — TV frame capture (analog + digital)
+RF Signal (433.92 MHz)  ─┐
+WiFi MAC (B4:1E:52:xx)  ─┼─ Rule Engine ─→ "Flock Safety Camera [wifi+rf]"
+BLE UUID (0x3100)       ─┘                  Confidence: 100%  Threat: CRITICAL
 ```
 
-## Dependencies
+Rules use boolean logic:
+```json
+{"anyOf": ["mac_oui:B4:1E:52", "ssid_pattern:^Flock-", "ble_name:flock"]}
+```
 
-- **Hardware**: HackRF One or RTL-SDR
-- **System**: hackrf_transfer, rtl_sdr, rtl_power, dsdccx, multimon-ng, sox, aplay/paplay
-- **Python**: numpy, edge-tts
-- **Audio**: PipeWire or PulseAudio
+### Signal Databases
 
-## How It Works
+| Database | Entries | Source | Content |
+|----------|---------|--------|---------|
+| Artemis 3 | 427 | sigidwiki.com | RF signal identifications |
+| Spy DB | 81 | rflord | Surveillance devices, cameras, bugs, jammers |
+| Drone RF | 45 | rflord | Drone control/video protocols |
+| RF Protocols | 692 | ringmast4r | Sub-GHz ISM devices |
+| AirHound | 103 | dougborg/AirHound | MAC OUIs, BLE UUIDs, SSID patterns |
 
-1. Scans all RF bands using hackrf_sweep (1 MHz - 6 GHz)
-2. Classifies each signal against known databases
-3. Identifies drone activity using 45 RF signatures
-4. Estimates distance using Free-Space Path Loss
-5. Classifies territory (city/suburban/countryside)
-6. Captures IQ samples for deeper analysis
-7. Tries voice decode (DSD, multimon-ng) on narrowband signals
-8. Announces findings via TTS voice alerts
+### WiFi Scanning
 
-## Detection Capabilities
+RFLord periodically scans WiFi networks using `iw dev <iface> scan` and matches:
+- MAC OUI prefixes against known surveillance camera manufacturers
+- SSID patterns against regex patterns (e.g., `Flock-XXXXXX`)
 
-- **Drones**: DJI OcuSync/O3/O4, HDZero, Walksnail, ELRS, Crossfire, TBS Tracer, FrSky, Spektrum
-- **Analog video**: NTSC/PAL FPV transmitters (900 MHz, 1.2 GHz, 2.4 GHz, 5.8 GHz)
-- **Digital voice**: DMR, D-STAR, dPMR, YSF, NXDN, P25
-- **Data**: POCSAG, FLEX, EAS, DTMF, Morse, AFSK
-- **Cellular**: GSM 900/1800, 3G, 4G LTE
-- **Broadcast**: FM, DAB, DVB-T
+### BLE Scanning
 
-## Tests
+RFLord periodically scans BLE devices using `hcitool lescan` and matches:
+- Service UUIDs (Raven acoustic sensors, Open Drone ID)
+- Device names (Flock Safety, card skimmers)
+- Manufacturer IDs (XUNTONG/Flock Safety)
 
-88 pytest tests in `tests/`:
+## Web Dashboard
+
+Enable in `config.yaml`:
+```yaml
+web:
+  enabled: true
+  port: 8080
+```
+
+Access from any device on the same network: `http://<uconsole-ip>:8080`
+
+The dashboard shows:
+- Live signal stream via Server-Sent Events (SSE)
+- Suspicious vs known signals
+- Signal details (frequency, power, distance, type)
+- Alert count and uptime
+
+## Configuration
+
+Default config at `~/.config/rflord/config.yaml`:
+
+```yaml
+scan:
+  interval: 30  # seconds between scans
+voice:
+  enabled: true
+  threshold: -50  # dBFS minimum for voice alerts
+history:
+  enabled: true
+  db_path: ~/.local/share/rflord/history.db
+  max_days: 30
+export:
+  format: csv
+  path: ~/.local/share/rflord/exports/
+web:
+  enabled: true
+  port: 8080
+blacklist:
+  file: ~/.config/rflord/ignore.conf
+```
+
+## File Structure
+
+```
+rflord/
+├── rflord.py              # Main application (curses + ANSI modes)
+├── rule_engine.py          # Unified RF+WiFi+BLE threat assessment
+├── signatures_db.py        # Unified SQLite signature database API
+├── build_signatures_db.py  # Migration script for signature database
+├── web.py                  # Flask + SSE web dashboard
+├── history.py              # SQLite signal history tracker
+├── spy_db.py               # Surveillance device database
+├── drone_rf_db.py          # Drone RF signature database
+├── rf_protocols.py         # Sub-GHz protocol database
+├── config.py               # YAML config loader
+├── blacklist.py            # Signal blacklist/ignore
+├── scan_accel.py           # Adaptive scan acceleration
+├── export.py               # CSV/JSON export
+├── tests/                  # Test suite (150 tests)
+├── logo.svg                # Vector logo
+├── logo.png                # Raster logo
+└── README.md               # This file
+```
+
+## Testing
 
 ```bash
-# Run all tests
 python3 -m pytest tests/ -v
-
-# Or use the runner script
-./tests/run_tests.sh
 ```
 
-- `test_table_alignment.py` — 45 tests (distance, classify, bands, row widths, grouping, priority, noise floor, sweep parsing)
-- `test_hotkeys.py` — 24 tests (key mapping, suppress menu arrows/space/enter/ESC, suppress targets)
-- `test_hackrf_switcher.py` — 10 tests (device detection, PortaPack ACM1→ACM0, sweep commands)
+150 tests across 6 test files:
+- `test_hotkeys.py` — Key mapping, log/history views, suppress menu
+- `test_hackrf_switcher.py` — Device detection, PortaPack switching
+- `test_table_alignment.py` — Column alignment, distance formatting
+- `test_new_modules.py` — Config, blacklist, scan acceleration, history
 
-All tests mock hardware — no SDR needed. Run before every push.
+## Credits
 
-## Limitations
-
-- WiFi IP cameras are indistinguishable from normal WiFi traffic
-- Cameras recording locally have no RF emission
-- DJI drones use encrypted video — cannot decode content
-- Narrowband signals (<50 kHz) are not video transmitters
-- 900 MHz band is GSM cellular in most locations
+- [AirHound](https://github.com/dougborg/AirHound) — WiFi/BLE surveillance detection signatures and rule engine pattern
+- [ringmast4r/RF-Protocol-Database](https://github.com/ringmast4r/RF-Protocol-Database) — 692 Sub-GHz protocol signatures
+- [Artemis 3](https://www.sigidwiki.com) — RF signal identification database
+- [ClockworkPi](https://clockworkpi.com) — uConsole hardware
 
 ## License
 
 MIT
 
-## Author
+---
 
-**Ihor Kolodyuk**
+<p align="center">
+  <sub>Built with ❤️ for the RF hacking community</sub>
+</p>

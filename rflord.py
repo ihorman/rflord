@@ -30,6 +30,7 @@ from export import export_csv, export_json
 from blacklist import load_blacklist, filter_blacklisted
 from scan_accel import ScanAccelerator
 from rf_protocols import identify_by_freq as rfproto_identify, get_protocol_count as rfproto_count
+from rule_engine import RuleEngine
 
 # Load config
 _cfg = load_config()
@@ -1221,7 +1222,7 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.clrtobot()
     stdscr.refresh()
 
-def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None):
+def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None, assessment=None):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
     global _cursor_pos, _cursor_active
     if known_freqs is None:
@@ -1262,6 +1263,17 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         url_line = f" Web Dashboard: {web_url}"
         try:
             stdscr.addstr(row, 0, (url_line[:w-1]).ljust(w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+        except: pass
+        row += 1
+
+    # Threat assessment line (from rule engine)
+    if assessment and assessment.has_threats:
+        threat_icons = {0: "🔴", 1: "🟠", 2: "🟡", 3: "🟢"}
+        icon = threat_icons.get(assessment.max_threat_level, "🟢")
+        threat_line = f" {icon} {assessment.summary}"
+        try:
+            color = CP_DANGER if assessment.max_threat_level <= 1 else CP_SUS_YEL
+            stdscr.addstr(row, 0, (threat_line[:w-1]).ljust(w-1), curses.color_pair(color) | curses.A_BOLD)
         except: pass
         row += 1
 
@@ -1457,7 +1469,37 @@ def main_curses(stdscr, devices):
     status.append(f"Signatures databases loaded: OK ({total} total: {db_count} Artemis, {spy_count} spy, {drone_count} drone, {proto_count} RF protocols)")
     status.append("Initial scan & analysis: in progress")
     draw_splash(stdscr, device, status)
-    
+
+    # Initialize rule engine for unified threat assessment
+    rule_engine = RuleEngine()
+    wifi_iface = "wlan0"  # Default WiFi interface
+    # Detect WiFi interface
+    try:
+        import glob as _glob
+        wifi_ifaces = _glob.glob("/sys/class/net/wl*")
+        if wifi_ifaces:
+            wifi_iface = os.path.basename(wifi_ifaces[0])
+    except: pass
+
+    def _wifi_ble_scan_worker():
+        """Background WiFi + BLE scan. Runs periodically."""
+        try:
+            wifi_events = RuleEngine.scan_wifi(wifi_iface, timeout=5)
+            for e in wifi_events:
+                rule_engine.add_wifi_device(mac=e.mac, ssid=e.ssid, rssi=e.rssi)
+            if wifi_events:
+                log.info(f"WiFi scan: {len(wifi_events)} devices")
+        except Exception as ex:
+            log.debug(f"WiFi scan skip: {ex}")
+        try:
+            ble_events = RuleEngine.scan_ble(timeout=3)
+            for e in ble_events:
+                rule_engine.add_ble_device(name=e.ble_name, uuid=e.ble_uuid, mfr_id=e.ble_mfr_id)
+            if ble_events:
+                log.info(f"BLE scan: {len(ble_events)} devices")
+        except Exception as ex:
+            log.debug(f"BLE scan skip: {ex}")
+
     bands = [
         (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
         (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
@@ -1523,6 +1565,9 @@ def main_curses(stdscr, devices):
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
 
+        # Periodic WiFi + BLE scan (every 5 scans, in background)
+        if scan_num % 5 == 1:
+            threading.Thread(target=_wifi_ble_scan_worker, daemon=True, name="rflord-wifi-ble").start()
 
         all_signals = []
         h, w = stdscr.getmaxyx()
@@ -1605,6 +1650,20 @@ def main_curses(stdscr, devices):
         if web_dash:
             web_dash.update_signals(unique, {'version': VERSION, 'alerts': alert_count, 'device': device})
 
+        # Rule engine: unified threat assessment (RF + WiFi + BLE)
+        assessment = rule_engine.process_rf_scan(unique)
+        if assessment.has_threats:
+            for rm in assessment.rules_matched:
+                sources = '+'.join(sorted(rm.source_types))
+                log.warning(f"THREAT: {rm.rule_name} [{sources}] ({rm.confidence:.0%}) — {rm.description}")
+                if rm.rule_name not in known_freqs:
+                    known_freqs[rm.rule_name] = time.time()
+                    alert_count += 1
+            # Voice alert for threats (threaded — non-blocking)
+            voice_msg = rule_engine.format_voice_alert(assessment)
+            if voice_msg and voice_enabled:
+                speak(voice_msg)
+
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
         probes = detect_active_probes(unique, noise_floor)
@@ -1636,7 +1695,7 @@ def main_curses(stdscr, devices):
         if not first_scan_done:
             stdscr.clear()
             stdscr.refresh()
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
         
         # Update splash status after first scan
         if not first_scan_done:
@@ -1724,7 +1783,7 @@ def main_curses(stdscr, devices):
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
         
         # Refresh table after voice alerts
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
         
         # Wait with non-blocking key reads (200ms timeout per getch)
         wait_end = time.time() + INTERVAL
@@ -1737,17 +1796,17 @@ def main_curses(stdscr, devices):
                 break
             elif key == 'mute':
                 voice_enabled = not voice_enabled
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'voice':
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             elif key == 'interval_up':
                 INTERVAL = min(600, INTERVAL + 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'interval_down':
                 INTERVAL = max(30, INTERVAL - 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'suppress':
                 _show_suppress_menu(stdscr)
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
@@ -1757,19 +1816,19 @@ def main_curses(stdscr, devices):
                 else:
                     _suppress_active = False
                     _suppress_stop()
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_up':
                 _cursor_pos = max(0, _cursor_pos - 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_down':
                 # Get current suspicious count
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
                 _cursor_pos = min(len(sus_grp) - 1, _cursor_pos + 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_off':
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'details':
                 # Get the selected signal from suspicious list
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
@@ -1779,7 +1838,7 @@ def main_curses(stdscr, devices):
                     # Get the strongest signal in the group
                     g = sus_grp[_cursor_pos]
                     _show_signal_detail(stdscr, g['_strongest'], artemis_db)
-                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'export':
                 export_dir = os.path.expanduser(_cfg['export']['path'])
                 os.makedirs(export_dir, exist_ok=True)
@@ -1790,13 +1849,13 @@ def main_curses(stdscr, devices):
                     export_csv(filepath, unique)
                 else:
                     export_json(filepath, unique)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'log':
                 _show_log_view(stdscr)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'history':
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
       except Exception as e:
         log.warning(f"Main loop exception: {e}")
         try:
