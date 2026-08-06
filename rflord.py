@@ -889,6 +889,16 @@ def _read_key(stdscr):
             return 'cursor_off'
     except Exception as e:
         log.warning(f"_read_key exception: {e}")
+        # Recover curses state
+        try:
+            curses.cbreak()
+            curses.noecho()
+            stdscr.keypad(True)
+            stdscr.nodelay(True)
+            stdscr.timeout(200)
+            stdscr.clear()
+            stdscr.refresh()
+        except: pass
     return None
 
 def ensure_sink():
@@ -1322,8 +1332,12 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             if history:
                 trend_vals = history.get_trend(g['freq'], n=5)
                 if len(trend_vals) >= 2:
-                    if trend_vals[-1] > trend_vals[0] + 3: trend = ' '
-                    elif trend_vals[-1] < trend_vals[0] - 3: trend = ' '
+                    try:
+                        new_peak = trend_vals[-1]['peak_dbfs']
+                        old_peak = trend_vals[0]['peak_dbfs']
+                        if new_peak > old_peak + 3: trend = ' '
+                        elif new_peak < old_peak - 3: trend = ' '
+                    except: pass
             # Cursor indicator
             cursor_mark = '▸' if (_cursor_active and i == _cursor_pos) else ' '
             line = f"{cursor_mark}{sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}{trend}"
@@ -1857,7 +1871,14 @@ def main_curses(stdscr, devices):
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
       except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
         log.warning(f"Main loop exception: {e}")
+        # Write full traceback to file for debugging
+        try:
+            with open("/tmp/rflord_crash.log", "a") as f:
+                f.write(f"\n=== {time.strftime('%Y-%m-%d %H:%M:%S')} ===\n{tb}\n")
+        except: pass
         try:
             _, ww = stdscr.getmaxyx()
             stdscr.addstr(0, 0, f"ERROR: {e}  Press 'q' to quit".ljust(ww-1), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
