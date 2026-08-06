@@ -1519,6 +1519,7 @@ def main_curses(stdscr, devices):
 
     first_scan_done = False
     while True:
+      try:
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
 
@@ -1796,6 +1797,14 @@ def main_curses(stdscr, devices):
             elif key == 'history':
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url)
+      except Exception as e:
+        log.warning(f"Main loop exception: {e}")
+        try:
+            _, ww = stdscr.getmaxyx()
+            stdscr.addstr(0, 0, f"ERROR: {e}  Press 'q' to quit".ljust(ww-1), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
+            stdscr.refresh()
+        except: pass
+        time.sleep(2)
 
 # === LOGGING WITH WEEKLY ROTATION ===
 import logging
