@@ -14,7 +14,9 @@ import json
 import os
 import sqlite3
 
-DB_PATH = os.path.expanduser("~/.local/share/rflord/signatures.db")
+_default_db = os.path.expanduser("~/.local/share/rflord/signatures.db")
+_local_db = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signatures.db")
+DB_PATH = _default_db if os.path.exists(_default_db) else _local_db
 
 
 class SignaturesDB:
