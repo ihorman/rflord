@@ -454,7 +454,7 @@ class RuleEngine:
         events = []
         try:
             r = subprocess.run(
-                ["iw", "dev", interface, "scan"],
+                ["sudo", "iw", "dev", interface, "scan"],
                 capture_output=True, text=True, timeout=timeout
             )
             if r.returncode != 0:
