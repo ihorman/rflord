@@ -1875,13 +1875,7 @@ def main_curses(stdscr, devices):
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
       except Exception as e:
-        import traceback
-        tb = traceback.format_exc()
         log.warning(f"Main loop exception: {e}")
-        # Write full traceback to stderr for debugging
-        import sys
-        sys.stderr.write(f"\n=== RFLORD CRASH {time.strftime('%H:%M:%S')} ===\n{tb}\n")
-        sys.stderr.flush()
         try:
             _, ww = stdscr.getmaxyx()
             stdscr.addstr(0, 0, f"ERROR: {e}  Press 'q' to quit".ljust(ww-1), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
