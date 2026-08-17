@@ -111,8 +111,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="scroll-wrap">
       <table>
-        <thead><tr><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th></tr></thead>
-        <tbody id="susBody"><tr><td colspan="6" class="empty">No suspicious signals</td></tr></tbody>
+        <thead><tr><th>Cnt</th><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th></tr></thead>
+        <tbody id="susBody"><tr><td colspan="7" class="empty">No suspicious signals</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -122,8 +122,8 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
     </div>
     <div class="scroll-wrap">
       <table>
-        <thead><tr><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th></tr></thead>
-        <tbody id="knownBody"><tr><td colspan="6" class="empty">No known signals</td></tr></tbody>
+        <thead><tr><th>Cnt</th><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th></tr></thead>
+        <tbody id="knownBody"><tr><td colspan="7" class="empty">No known signals</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -132,14 +132,15 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
 function fmtFreq(f) { return (f / 1e6).toFixed(3); }
 function fmtPower(p) { return (p != null) ? p.toFixed(1) + ' dB' : '—'; }
 function fmtStd(s) { return (s != null) ? s.toFixed(2) : '—'; }
-function fmtDist(d) { return (d != null) ? d.toFixed(1) + ' dB' : '—'; }
+function fmtDist(d) { return (d != null) ? d : '—'; }
 
 function renderRows(tbody, signals) {
   if (!signals || signals.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="6" class="empty">No signals detected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No signals detected</td></tr>';
     return;
   }
   tbody.innerHTML = signals.map(s => `<tr>
+    <td class="count">${s.count > 1 ? 'x' + s.count : ''}</td>
     <td class="freq">${fmtFreq(s.freq)}</td>
     <td class="power">${fmtPower(s.power)}</td>
     <td class="std">${fmtStd(s.std)}</td>
@@ -152,8 +153,8 @@ function renderRows(tbody, signals) {
 function update(data) {
   const signals = data.signals || [];
   const meta = data.metadata || {};
-  const sus = signals.filter(s => s.type === 'suspicious');
-  const known = signals.filter(s => s.type !== 'suspicious');
+  const sus = signals.filter(s => s.category === 'suspicious');
+  const known = signals.filter(s => s.category !== 'suspicious');
 
   document.getElementById('susCount').textContent = sus.length;
   document.getElementById('knownCount').textContent = known.length;

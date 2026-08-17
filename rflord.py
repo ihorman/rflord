@@ -65,12 +65,14 @@ _suppress_procs = []
 _menu_active = False
 _cursor_pos = 0
 _cursor_active = False
+_cursor_panel = 'sus'  # 'sus' or 'ok' — which panel the cursor is in
+_scan_status = ""  # Status line from scan workers (written by threads, read by main thread)
 
 TTS_VOICE = _cfg['voice']['voice_name']
 HAL_EFFECT = os.path.expanduser(_cfg['voice']['hal_effect'])
 VOICE_THRESHOLD = _cfg['voice']['threshold']
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
-DECODED_DIR = os.path.expanduser(_cfg['history'].get('decoded_dir', '~/sdr_captures/rflord_decoded'))
+DECODED_DIR = os.path.expanduser('~/.flord')
 MAX_AGE_DAYS = _cfg['history']['max_days']
 
 # Color pairs
@@ -136,8 +138,23 @@ def detect_device():
     return devices
 
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
-    cmd = f"/usr/bin/hackrf_sweep -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n} 2>/dev/null | grep '^[0-9]'"
-    return run_cmd(cmd, timeout=45)
+    cmd = f"/usr/bin/hackrf_sweep -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n}"
+    try:
+        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
+        if r.returncode != 0:
+            err = r.stderr.strip()
+            if err:
+                log.warning(f"hackrf_sweep {f_lo}-{f_hi} MHz failed: {err[:200]}")
+            return ""
+        # Filter to data lines only
+        lines = [l for l in r.stdout.strip().split('\n') if l and l[0].isdigit()]
+        return '\n'.join(lines)
+    except subprocess.TimeoutExpired:
+        log.warning(f"hackrf_sweep {f_lo}-{f_hi} MHz timeout")
+        return ""
+    except Exception as e:
+        log.warning(f"hackrf_sweep {f_lo}-{f_hi} MHz error: {e}")
+        return ""
 
 def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
     """RTL-SDR sweep using rtl_power. f_lo/f_hi in MHz (same as hackrf_sweep)."""
@@ -218,6 +235,7 @@ def group_signals_by_type(signals, artemis_db=None):
             'dist': est_distance(f_near, nearest['peak']),
             'band': get_band(f_strong),
             'nearest_freq': f_near,
+            '_strongest': strongest,  # Keep reference for detail popup
         })
     # Sort by count descending, then by peak
     result.sort(key=lambda x: (-x['count'], -x['peak']))
@@ -327,18 +345,42 @@ def classify(f, power, std):
     return "ok"
 
 def est_distance(freq_mhz, power_dbfs):
-    rx_dbm = power_dbfs - 30
-    if 88 <= freq_mhz <= 108: tx = 70
-    elif 174 <= freq_mhz <= 230: tx = 60
-    elif 800 <= freq_mhz <= 960: tx = 43
-    elif 2400 <= freq_mhz <= 2500: tx = 20
-    elif 5150 <= freq_mhz <= 5900: tx = 23
-    else: tx = 30
-    fspl = tx + 2 - rx_dbm
+    """Estimate distance from signal power using FSPL model.
+
+    HackRF with -l 32 -g 40 -a 1 = 83 dB total gain.
+    RTL-SDR with -g 40 = ~40 dB gain.
+    0 dBFS at ADC ≈ 0 dBm, so antenna_level = power_dbfs - gain.
+    """
+    # Effective dBFS-to-dBm offset for hackrf_sweep with -l 32 -g 40 -a 1.
+    # hackrf_sweep dBFS is partially normalized by the tool itself.
+    # Calibrated against real measurements: WiFi AP 100mW at 10m reads ~-50 dBFS.
+    SDR_GAIN = 10
+    rx_dbm = power_dbfs - SDR_GAIN
+
+    # Estimated transmit power (dBm) — conservative for typical sources
+    if 88 <= freq_mhz <= 108:    tx = 60    # FM broadcast tower (1 kW)
+    elif 174 <= freq_mhz <= 230: tx = 40    # DVB-T / DAB tower
+    elif 470 <= freq_mhz <= 790: tx = 40    # DVB-T tower
+    elif 800 <= freq_mhz <= 960: tx = 37    # GSM base station (5W)
+    elif 1805 <= freq_mhz <= 1880: tx = 37  # GSM base station
+    elif 108 <= freq_mhz <= 137: tx = 37    # Air band (aircraft 5W)
+    elif 144 <= freq_mhz <= 148: tx = 37    # 2m ham (5W)
+    elif 430 <= freq_mhz <= 470: tx = 30    # PMR / UHF handheld (1W)
+    elif 2400 <= freq_mhz <= 2500: tx = 20  # WiFi / Bluetooth (100mW)
+    elif 5150 <= freq_mhz <= 5900: tx = 23  # WiFi 5 GHz (200mW)
+    elif 5725 <= freq_mhz <= 5875: tx = 14  # FPV / spy camera (25mW)
+    elif 900 <= freq_mhz <= 928:  tx = 14   # Spy camera 900 MHz (25mW)
+    elif 1080 <= freq_mhz <= 1300: tx = 14  # Spy camera 1.2 GHz (25mW)
+    else: tx = 20                            # Default: 100 mW
+
+    # Free-space path loss from link budget
+    fspl = tx - rx_dbm  # dB
     fspl = max(20, min(160, fspl))
-    d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
-    d = max(0.001, min(500, d))
-    meters = d * 1000
+    # FSPL(dB) = 20*log10(d_km) + 20*log10(f_MHz) + 32.44
+    # Solve for d_km:
+    d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
+    d_km = max(0.001, min(500, d_km))
+    meters = d_km * 1000
     if meters < 1000:
         return f"{meters:.0f}m"
     elif meters < 10000:
@@ -348,17 +390,26 @@ def est_distance(freq_mhz, power_dbfs):
 
 def est_distance_m(freq_mhz, power_dbfs):
     """Return distance in meters as a number (for sorting)."""
-    rx_dbm = power_dbfs - 30
-    if 88 <= freq_mhz <= 108: tx = 70
-    elif 174 <= freq_mhz <= 230: tx = 60
-    elif 800 <= freq_mhz <= 960: tx = 43
+    SDR_GAIN = 10
+    rx_dbm = power_dbfs - SDR_GAIN
+    if 88 <= freq_mhz <= 108:    tx = 60
+    elif 174 <= freq_mhz <= 230: tx = 40
+    elif 470 <= freq_mhz <= 790: tx = 40
+    elif 800 <= freq_mhz <= 960: tx = 37
+    elif 1805 <= freq_mhz <= 1880: tx = 37
+    elif 108 <= freq_mhz <= 137: tx = 37
+    elif 144 <= freq_mhz <= 148: tx = 37
+    elif 430 <= freq_mhz <= 470: tx = 30
     elif 2400 <= freq_mhz <= 2500: tx = 20
     elif 5150 <= freq_mhz <= 5900: tx = 23
-    else: tx = 30
-    fspl = tx + 2 - rx_dbm
+    elif 5725 <= freq_mhz <= 5875: tx = 14
+    elif 900 <= freq_mhz <= 928:  tx = 14
+    elif 1080 <= freq_mhz <= 1300: tx = 14
+    else: tx = 20
+    fspl = tx - rx_dbm
     fspl = max(20, min(160, fspl))
-    d = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
-    return max(1, min(500000, d * 1000))
+    d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
+    return max(1, min(500000, d_km * 1000))
 
 def speak_distance(dist_str):
     """Convert distance string to spoken text: '284m' -> '284 meters'."""
@@ -492,7 +543,7 @@ def _show_suppress_menu(stdscr):
     
     while True:
         # Draw popup
-        pw, ph = 36, len(options) + 6
+        pw, ph = 42, len(options) + 6
         py = max(0, (h - ph) // 2)
         px = max(0, (w - pw) // 2)
         
@@ -504,7 +555,7 @@ def _show_suppress_menu(stdscr):
         
         try:
             stdscr.addstr(py, px + 2, " SUPPRESS TARGETS ", curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
-            stdscr.addstr(py + 1, px + 1, " Use arrows, Space to toggle, Enter=OK ", curses.color_pair(CP_DIM))
+            stdscr.addstr(py + 1, px + 1, " Arrows+Enter/Space=toggle, q/Esc=close", curses.color_pair(CP_DIM))
             stdscr.addstr(py + 2, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
         except: pass
         
@@ -539,20 +590,32 @@ def _show_suppress_menu(stdscr):
             cursor -= 1
         elif key == curses.KEY_DOWN and cursor < len(options) - 1:
             cursor += 1
-        elif key == ord(' '):
+        elif key == ord(' ') or key in (10, 13):
+            # Space or Enter toggles the current target
             name = options[cursor]
             _suppress_targets[name] = not _suppress_targets.get(name, False)
-        elif key in (10, 13):
-            stdscr.nodelay(True)
-            stdscr.timeout(200)
-            return True
-        elif key == 27:  # ESC to close
+        elif key == ord('q') or key == ord('Q') or key == 27:  # ESC/q to close
             stdscr.nodelay(True)
             stdscr.timeout(200)
             return True
 
+def _wrap_text(text, width):
+    """Word-wrap text to fit within width."""
+    words = text.split()
+    lines = []
+    current = ""
+    for w in words:
+        if current and len(current) + 1 + len(w) > width:
+            lines.append(current)
+            current = w
+        else:
+            current = current + " " + w if current else w
+    if current:
+        lines.append(current)
+    return lines
+
 def _show_signal_detail(stdscr, signal, artemis_db):
-    """Show signal detail popup with export option."""
+    """Show signal detail popup with full description text."""
     h, w = stdscr.getmaxyx()
     f = signal['freq'] / 1e6
     sig_type = get_signal_type(f, 0, 0, signal['std'], artemis_db)
@@ -566,44 +629,73 @@ def _show_signal_detail(stdscr, signal, artemis_db):
     if not (225 <= f <= 400):
         art = identify_signal(f, artemis_db) if artemis_db else None
     
-    lines = [
-        f"  Frequency:    {f:.3f} MHz",
-        f"  Type:         {sig_type}",
-        f"  Band:         {band}",
-        f"  Power:        {signal['peak']:+.1f} dBFS",
-        f"  Std Dev:      {signal['std']:.1f}",
-        f"  Distance:     {dist}",
-        f"  Class:        {cls}",
-    ]
+    # Determine popup width (use most of screen)
+    pw = min(max(60, w - 4), 100)
+    text_w = pw - 4  # Usable text width inside popup
+    
+    lines = []
+    lines.append(("label", f"  Frequency:    {f:.3f} MHz"))
+    lines.append(("label", f"  Type:         {sig_type}"))
+    lines.append(("label", f"  Band:         {band}"))
+    lines.append(("label", f"  Power:        {signal['peak']:+.1f} dBFS"))
+    lines.append(("label", f"  Std Dev:      {signal['std']:.1f}"))
+    lines.append(("label", f"  Distance:     {dist}"))
+    lines.append(("label", f"  Class:        {cls}"))
     
     if art:
-        lines.append(f"  Artemis:      {art['name']}")
+        lines.append(("art", f"  Artemis:      {art['name']}"))
         if art.get('description'):
-            lines.append(f"  Description:  {art['description'][:50]}")
+            desc = art['description']
+            wrapped = _wrap_text(desc, text_w - 16)
+            for j, wl in enumerate(wrapped):
+                prefix = "  Description:  " if j == 0 else "                "
+                lines.append(("desc", f"{prefix}{wl}"))
         if art.get('modulation'):
-            lines.append(f"  Modulation:   {art['modulation']}")
+            lines.append(("art", f"  Modulation:   {art['modulation']}"))
         if art.get('country'):
-            lines.append(f"  Country:      {art['country']}")
+            lines.append(("art", f"  Country:      {art['country']}"))
+        if art.get('url'):
+            lines.append(("dim", f"  URL:          {art['url'][:text_w-16]}"))
 
     # RF Protocol Database lookup
     protos = rfproto_identify(f, tolerance_mhz=0.5)
     if protos:
-        lines.append(f"  RF Protocols: {len(protos)} match(es)")
-        for p in protos[:3]:
-            lines.append(f"    {p['name'][:40]} ({p['category'][:20]})")
+        lines.append(("label", f"  RF Protocols: {len(protos)} match(es)"))
+        for p in protos[:5]:
+            lines.append(("label", f"    {p['name']} ({p['category']})"))
     
     if spy_name:
-        lines.append(f"  Spy Device:   {spy_icon} {spy_name}")
-        lines.append(f"  Threat Level: {threat}")
+        lines.append(("danger", f"  Spy Device:   {spy_icon} {spy_name}"))
+        lines.append(("danger", f"  Threat Level: {threat}"))
+    
+    # Signature DB lookup
+    try:
+        from signatures_db import SignaturesDB
+        sdb = SignaturesDB()
+        sig_matches = sdb.identify_freq(f, tolerance_mhz=0.5)
+        if sig_matches:
+            lines.append(("label", f"  Signature DB: {len(sig_matches)} match(es)"))
+            for sm in sig_matches[:3]:
+                name = sm.get('name', '?')
+                src = sm.get('source', '?')
+                lines.append(("label", f"    {name} [{src}]"))
+    except: pass
+    
+    # Flatten lines to strings
+    display_lines = [(t, l) for t, l in lines]
+    text_lines = [l for _, l in display_lines]
     
     # Build popup
-    pw = max(48, max(len(l) for l in lines) + 4)
-    ph = len(lines) + 6
+    ph = min(len(display_lines) + 6, h - 2)
     py = max(0, (h - ph) // 2)
     px = max(0, (w - pw) // 2)
     
+    # Scroll offset for long content
+    scroll = 0
+    visible_rows = ph - 6  # rows available for content
+    
     while True:
-        # Draw popup
+        # Draw popup background
         for y in range(ph):
             try:
                 stdscr.addstr(py + y, px, " " * pw, curses.color_pair(CP_HEADER))
@@ -616,19 +708,28 @@ def _show_signal_detail(stdscr, signal, artemis_db):
             stdscr.addstr(py + 1, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
         except: pass
         
-        for i, line in enumerate(lines):
+        # Draw visible content lines
+        for i in range(visible_rows):
+            li = scroll + i
+            if li >= len(display_lines):
+                break
+            t, line = display_lines[li]
             try:
-                attr = curses.color_pair(CP_OK)
-                if "Spy Device" in line or "Threat" in line:
+                if t == "danger":
                     attr = curses.color_pair(CP_SUS_RED) | curses.A_BOLD
-                elif "Artemis" in line or "Description" in line:
+                elif t == "desc" or t == "art":
                     attr = curses.color_pair(CP_SUS_YEL)
+                elif t == "dim":
+                    attr = curses.color_pair(CP_DIM)
+                else:
+                    attr = curses.color_pair(CP_OK)
                 stdscr.addstr(py + 2 + i, px + 1, line[:pw-2], attr)
             except: pass
         
         try:
             stdscr.addstr(py + ph - 3, px + 1, "─" * (pw - 2), curses.color_pair(CP_SEP))
-            stdscr.addstr(py + ph - 2, px + 2, " e:Export  ESC/d:Close ", curses.color_pair(CP_DIM))
+            nav = " ↑↓:Scroll" if len(display_lines) > visible_rows else ""
+            stdscr.addstr(py + ph - 2, px + 2, f"{nav}  e:Export  ESC/d:Close ", curses.color_pair(CP_DIM))
         except: pass
         
         stdscr.refresh()
@@ -640,12 +741,16 @@ def _show_signal_detail(stdscr, signal, artemis_db):
         stdscr.nodelay(True)
         stdscr.timeout(200)
 
-        if key in (ord('d'), ord('D'), 27, 10, 13):  # d, ESC, Enter
+        if key == curses.KEY_UP and scroll > 0:
+            scroll -= 1
+        elif key == curses.KEY_DOWN and scroll + visible_rows < len(display_lines):
+            scroll += 1
+        elif key in (ord('d'), ord('D'), 27, 10, 13):  # d, ESC, Enter
             return
         elif key == ord('e') or key == ord('E'):
             # Export to file
             try:
-                export_dir = "/home/ihorman/sdr_captures/rflord_exports"
+                export_dir = os.path.expanduser(_cfg['export']['path'])
                 os.makedirs(export_dir, exist_ok=True)
                 ts = time.strftime("%Y%m%d_%H%M%S")
                 freq_label = f"{f:.1f}".replace('.', 'p')
@@ -654,7 +759,7 @@ def _show_signal_detail(stdscr, signal, artemis_db):
                 with open(filepath, 'w') as ef:
                     ef.write(f"RfLord Signal Export — {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
                     ef.write(f"{'=' * 50}\n\n")
-                    for line in lines:
+                    for _, line in display_lines:
                         ef.write(line.strip() + "\n")
                     ef.write(f"\nRaw data: freq={signal['freq']}, peak={signal['peak']}, std={signal['std']}\n")
                 # Flash confirmation
@@ -876,6 +981,12 @@ def _read_key(stdscr):
         elif key == curses.KEY_DOWN:
             _cursor_active = True
             return 'cursor_down'
+        elif key == curses.KEY_LEFT:
+            _cursor_active = True
+            return 'cursor_left'
+        elif key == curses.KEY_RIGHT:
+            _cursor_active = True
+            return 'cursor_right'
         elif key == ord('d') or key == ord('D'):
             return 'details'
         elif key == ord('e') or key == ord('E'):
@@ -889,14 +1000,13 @@ def _read_key(stdscr):
             return 'cursor_off'
     except Exception as e:
         log.warning(f"_read_key exception: {e}")
-        # Recover curses state
+        # Recover curses state WITHOUT clearing screen
         try:
             curses.cbreak()
             curses.noecho()
             stdscr.keypad(True)
             stdscr.nodelay(True)
             stdscr.timeout(200)
-            stdscr.clear()
             stdscr.refresh()
         except: pass
     return None
@@ -1038,12 +1148,12 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     else: return "Analog"
 
 def ensure_decoded_dir():
+    os.makedirs(os.path.join(DECODED_DIR, "screenshots"), exist_ok=True)
     os.makedirs(os.path.join(DECODED_DIR, "audio"), exist_ok=True)
-    os.makedirs(os.path.join(DECODED_DIR, "video"), exist_ok=True)
 
 def cleanup_old_decoded():
     cutoff = time.time() - (MAX_AGE_DAYS * 86400)
-    for subdir in ["audio", "video"]:
+    for subdir in ["screenshots", "audio"]:
         for f in glob.glob(os.path.join(DECODED_DIR, subdir, "*")):
             try:
                 if os.path.getmtime(f) < cutoff:
@@ -1118,6 +1228,58 @@ def play_voice_sample(freq_mhz):
     except Exception as e:
         log.warning(f"VOICE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
 
+def is_camera_signal(freq_mhz, std, sig_type=""):
+    """Check if signal is a hidden camera or FPV video transmitter."""
+    # By signal type label
+    if sig_type in ("CAM?", "SPY-CAM", "CAM-DTV?", "FPV?", "WiFi/FPV",
+                    "Hidden Camera 900MHz", "Hidden Camera 1.2GHz",
+                    "Hidden Camera 5.8GHz", "WiFi 6E Camera 6GHz",
+                    "FPV Video TX 5.8GHz", "FPV Video TX 70cm",
+                    "FPV Video TX 1.2GHz", "WiFi Spy Camera",
+                    "WiFi 5GHz Spy Camera", "WiFi 6E Spy Camera"):
+        return True
+    # By frequency + low std (narrowband continuous carrier = video TX)
+    if std < 3:
+        if 900 <= freq_mhz <= 928: return True
+        if 1080 <= freq_mhz <= 1300: return True
+        if 1200 <= freq_mhz <= 1400: return True
+        if 470 <= freq_mhz <= 790: return True
+        if 5725 <= freq_mhz <= 5875: return True
+        if 2410 <= freq_mhz <= 2483: return True
+    return False
+
+def try_fpv_decode(freq_mhz):
+    """Try to decode FPV/spy camera video signal and save a screenshot."""
+    try:
+        # Only try for known camera/FPV bands
+        is_camera = (900 <= freq_mhz <= 928) or (1080 <= freq_mhz <= 1300) or \
+                    (1200 <= freq_mhz <= 1400) or (2400 <= freq_mhz <= 2483) or \
+                    (470 <= freq_mhz <= 790) or (5725 <= freq_mhz <= 5875)
+        if not is_camera:
+            return None
+        ensure_decoded_dir()
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
+        out_file = os.path.join(DECODED_DIR, "screenshots", f"{ts}_{freq_label}MHz_cam.png")
+        log.info(f"CAMERA SCREENSHOT: attempting capture at {freq_mhz:.1f} MHz")
+        # Use fpv_decode.py to capture and decode a video frame
+        r = run_cmd(f"python3 {os.path.dirname(__file__)}/fpv_decode.py capture "
+                    f"--freq {freq_mhz} --auto --output {out_file} --duration 2", timeout=20)
+        if r:
+            log.info(f"CAMERA SCREENSHOT: result={r[:200]}")
+        if os.path.exists(out_file):
+            log.info(f"CAMERA SCREENSHOT: saved {out_file}")
+            return out_file
+        # Check for green variant
+        green_file = out_file.replace('.png', '_green.png')
+        if os.path.exists(green_file):
+            log.info(f"CAMERA SCREENSHOT: saved {green_file}")
+            return green_file
+        log.info(f"CAMERA SCREENSHOT: no frame at {freq_mhz:.1f} MHz")
+    except Exception as e:
+        log.warning(f"CAMERA SCREENSHOT EXCEPTION: {freq_mhz:.1f} MHz: {e}")
+    return None
+
 def try_voice_decode(freq_mhz):
     try:
         scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
@@ -1125,20 +1287,25 @@ def try_voice_decode(freq_mhz):
         log.info(f"VOICE DECODE: running {cmd}")
         r = run_cmd(cmd, timeout=15)
         log.info(f"VOICE DECODE: result={r[:200] if r else '(empty)'}")
-        is_voice_band = (88 <= freq_mhz <= 108) or (108 <= freq_mhz <= 137) or (150 <= freq_mhz <= 174) or (400 <= freq_mhz <= 470)
-        if is_voice_band:
-            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz is in voice band, playing sample")
+        # Play voice audio whenever a voice signal is detected, not just in hardcoded bands
+        has_voice = False
+        if r:
+            voice_indicators = ["DMR", "D-STAR", "NFM", "AM", "POCSAG", "DTMF", "Morse",
+                                "Analog", "voice", "Power"]
+            has_voice = any(ind in r for ind in voice_indicators)
+        if has_voice:
+            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz has voice signal, playing sample")
             play_voice_sample(freq_mhz)
         else:
-            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz NOT in voice band (skip play)")
-        if "DMR" in r: return "DMR digital voice"
-        if "D-STAR" in r: return "D-STAR ham radio"
-        if "NFM" in r and "Power" in r:
+            log.info(f"VOICE DECODE: {freq_mhz:.1f} MHz no voice detected (skip play)")
+        if r and "DMR" in r: return "DMR digital voice"
+        if r and "D-STAR" in r: return "D-STAR ham radio"
+        if r and "NFM" in r and "Power" in r:
             if "Analog NFM" in r: return "FM voice radio"
-        if "AM" in r and "Air band" in r: return "AM aviation radio"
-        if "POCSAG" in r: return "POCSAG pager"
-        if "DTMF" in r: return "DTMF tones"
-        if "Morse" in r: return "Morse code"
+        if r and "AM" in r and "Air band" in r: return "AM aviation radio"
+        if r and "POCSAG" in r: return "POCSAG pager"
+        if r and "DTMF" in r: return "DTMF tones"
+        if r and "Morse" in r: return "Morse code"
     except Exception as e:
         log.warning(f"VOICE DECODE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
     return None
@@ -1164,6 +1331,13 @@ def signal_priority(freq_mhz, std):
 
 def severity_score(freq_mhz, peak_dbfs, std, classify_result):
     """Higher score = more severe/important. Combines priority, strength, classification."""
+    # Defensive: ensure numeric types (guards against dict/None from corrupted data)
+    try:
+        freq_mhz = float(freq_mhz)
+        peak_dbfs = float(peak_dbfs)
+        std = float(std)
+    except (TypeError, ValueError):
+        return 0
     pri = signal_priority(freq_mhz, std)
     # Priority weight: military(0) -> 100, spy(1) -> 50, other(2) -> 10
     pri_weight = {0: 100, 1: 50, 2: 10}.get(pri, 10)
@@ -1234,7 +1408,7 @@ def draw_splash(stdscr, device, status_lines=None):
 
 def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None, assessment=None):
     """Draw split-screen table: suspicious left, known right. NO SCROLL."""
-    global _cursor_pos, _cursor_active
+    global _cursor_pos, _cursor_active, _cursor_panel
     if known_freqs is None:
         known_freqs = {}
     stdscr.erase()
@@ -1244,17 +1418,21 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
     
-    # Clamp cursor to valid range
-    if _cursor_active and len(sus_grouped) > 0:
-        _cursor_pos = max(0, min(_cursor_pos, len(sus_grouped) - 1))
-    else:
-        _cursor_pos = 0
-
-
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
                 key=lambda x: x['peak'], reverse=True)
     ok_grouped = group_signals_by_type(ok, artemis_db)
     
+    # Clamp cursor to valid range for active panel
+    if _cursor_active:
+        active_list = sus_grouped if _cursor_panel == 'sus' else ok_grouped
+        if len(active_list) > 0:
+            _cursor_pos = max(0, min(_cursor_pos, len(active_list) - 1))
+        else:
+            _cursor_pos = 0
+    else:
+        _cursor_pos = 0
+
+
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
@@ -1335,19 +1513,20 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                     if len(trend_vals) >= 2:
                         v0 = trend_vals[0]
                         v1 = trend_vals[-1]
-                        p0 = v0['peak_dbfs'] if isinstance(v0, dict) else float(v0)
-                        p1 = v1['peak_dbfs'] if isinstance(v1, dict) else float(v1)
-                        if isinstance(p0, (int, float)) and isinstance(p1, (int, float)):
-                            if p1 > p0 + 3: trend = ' '
-                            elif p1 < p0 - 3: trend = ' '
+                        p0 = v0.get('peak_dbfs', 0) if isinstance(v0, dict) else float(v0)
+                        p1 = v1.get('peak_dbfs', 0) if isinstance(v1, dict) else float(v1)
+                        p0 = float(p0) if not isinstance(p0, dict) else 0
+                        p1 = float(p1) if not isinstance(p1, dict) else 0
+                        if p1 > p0 + 3: trend = ' '
+                        elif p1 < p0 - 3: trend = ' '
                 except Exception as ex:
                     log.debug(f"Trend arrow error: {ex}")
-            # Cursor indicator
-            cursor_mark = '▸' if (_cursor_active and i == _cursor_pos) else ' '
+            # Cursor indicator — left panel (suspicious)
+            cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'sus' and i == _cursor_pos) else ' '
             line = f"{cursor_mark}{sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}{trend}"
             try:
                 attr = curses.color_pair(cp) | curses.A_BOLD
-                if _cursor_active and i == _cursor_pos:
+                if _cursor_active and _cursor_panel == 'sus' and i == _cursor_pos:
                     attr |= curses.A_REVERSE
                 stdscr.addstr(row, 0, line[:mid-1], attr)
             except: pass
@@ -1356,12 +1535,17 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         if i < len(ok_grouped):
             g = ok_grouped[i]
             cnt = f"x{g['count']}" if g['count'] > 1 else ""
+            # Cursor indicator — right panel (known)
+            cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'ok' and i == _cursor_pos) else ' '
             # Right table: cnt(4)+sp+pwr(6)+sp+dist(5)+sp+band(4)+sp = 21 fixed
             id_w = max(15, (w - mid) - 22)
             type_str = g['type'][:id_w]
-            line = f" {cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}"
+            line = f"{cursor_mark}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}"
             try:
-                stdscr.addstr(row, mid, line[:w-mid-1], curses.color_pair(CP_OK))
+                attr = curses.color_pair(CP_OK)
+                if _cursor_active and _cursor_panel == 'ok' and i == _cursor_pos:
+                    attr |= curses.A_REVERSE
+                stdscr.addstr(row, mid, line[:w-mid-1], attr)
             except: pass
         
         row += 1
@@ -1379,8 +1563,17 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     try:
         voice_str = "ON" if voice_enabled else "OFF"
         sup_str = "ON" if _suppress_active else "OFF"
-        cur_str = f"[{_cursor_pos+1}/{len(sus_grouped)}]" if (_cursor_active and len(sus_grouped) > 0) else ""
-        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
+        # Show cursor position for active panel
+        if _cursor_active:
+            if _cursor_panel == 'sus' and len(sus_grouped) > 0:
+                cur_str = f" [SUS {_cursor_pos+1}/{len(sus_grouped)}]"
+            elif _cursor_panel == 'ok' and len(ok_grouped) > 0:
+                cur_str = f" [OK {_cursor_pos+1}/{len(ok_grouped)}]"
+            else:
+                cur_str = ""
+        else:
+            cur_str = ""
+        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ←→:Panel  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
         stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -1543,6 +1736,12 @@ def main_curses(stdscr, devices):
             os.unlink(state_file)
         except: pass
 
+    # Kill any stale hackrf processes from previous runs
+    if has_hackrf:
+        subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
+                       capture_output=True, timeout=5)
+        time.sleep(1)
+
     # Reset HackRF once at startup
     if has_hackrf:
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
@@ -1601,13 +1800,10 @@ def main_curses(stdscr, devices):
             results = {}
 
             def _scan_worker(dev, dev_bands, result_key):
+                global _scan_status
                 sigs = []
                 for f_lo, f_hi, bw, n in dev_bands:
-                    try:
-                        status_line = f" [{dev.upper()}] {f_lo}-{f_hi} MHz "
-                        stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
-                        stdscr.refresh()
-                    except: pass
+                    _scan_status = f" [{dev.upper()}] {f_lo}-{f_hi} MHz "
                     if dev == "rtlsdr":
                         output = rtlsdr_sweep(f_lo, f_hi)
                     else:
@@ -1621,8 +1817,18 @@ def main_curses(stdscr, devices):
                 t = threading.Thread(target=_scan_worker, args=(dev, dev_bands, dev_i), daemon=True)
                 threads.append(t)
                 t.start()
-            for t in threads:
-                t.join()
+            # Poll threads — draw status and read keys while scanning
+            while any(t.is_alive() for t in threads):
+                if _scan_status:
+                    try:
+                        stdscr.addstr(0, 0, _scan_status.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+                        stdscr.refresh()
+                    except: pass
+                key = _read_key(stdscr)
+                if key == 'quit':
+                    _suppress_stop()
+                    return
+                time.sleep(0.05)
             for sigs in results.values():
                 all_signals.extend(sigs)
         else:
@@ -1654,6 +1860,9 @@ def main_curses(stdscr, devices):
         # Blacklist filtering
         unique = filter_blacklisted(unique, blacklist)
 
+        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
+        log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
+
         # Scan acceleration recording
         if accel:
             for f_lo, f_hi, bw, n in bands:
@@ -1664,9 +1873,26 @@ def main_curses(stdscr, devices):
         if history:
             history.record_scan(unique, device)
 
-        # Web dashboard update
+        # Web dashboard update — pass grouped data same as curses
         if web_dash:
-            web_dash.update_signals(unique, {'version': VERSION, 'alerts': alert_count, 'device': device})
+            sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+                              key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
+            ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
+                             key=lambda x: x["peak"], reverse=True)
+            sus_grouped = group_suspicious(sus_list, artemis_db)
+            ok_grouped = group_signals_by_type(ok_list, artemis_db)
+            # Format for web JS: {freq, power, std, distance, type, identification, count, band, category}
+            web_sus = [{'freq': g['freq'] * 1e6, 'power': g['peak'], 'std': g['std'],
+                        'distance': g['dist'], 'type': g['type'], 'identification': g.get('remark', ''),
+                        'count': g['count'], 'category': 'suspicious'} for g in sus_grouped]
+            web_ok = [{'freq': g['freq'] * 1e6, 'power': g['peak'], 'std': g['std'],
+                       'distance': g['dist'], 'type': g['type'], 'identification': g.get('remark', ''),
+                       'count': g['count'], 'band': g.get('band', '?'), 'category': 'known'} for g in ok_grouped]
+            web_dash.update_signals(web_sus + web_ok, {
+                'version': VERSION, 'alerts': alert_count, 'device': device,
+                'sus_count': len(sus_grouped), 'ok_count': len(ok_grouped),
+                'uptime': str(int(time.time() - start_time)),
+            })
 
         # Rule engine: unified threat assessment (RF + WiFi + BLE)
         assessment = rule_engine.process_rf_scan(unique)
@@ -1728,6 +1954,25 @@ def main_curses(stdscr, devices):
             cleanup_old_decoded()
             cleanup_old_logs()
         
+        # Camera screenshot: ALWAYS capture for every detected hidden camera/FPV
+        camera_signals = [s for s in new_suspicious
+                          if is_camera_signal(s['freq']/1e6, s['std'],
+                                              get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))]
+        if camera_signals:
+            def _camera_worker(sigs):
+                for s in sigs:
+                    f = s['freq'] / 1e6
+                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                    label = spy_name or get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing screenshot")
+                    screenshot = try_fpv_decode(f)
+                    if screenshot:
+                        log.warning(f"HIDDEN CAMERA: screenshot saved {screenshot}")
+                    else:
+                        log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
+            threading.Thread(target=_camera_worker, args=(camera_signals,),
+                             daemon=True, name="rflord-camera").start()
+        
         # Voice alert
         if new_suspicious and voice_enabled:
             log.info(f"Voice alert: {len(new_suspicious)} new suspicious, threshold={VOICE_THRESHOLD}")
@@ -1764,17 +2009,25 @@ def main_curses(stdscr, devices):
                 def _voice_worker():
                     vr = None
                     for s in above_threshold:
-                        if s['std'] < 6:
-                            vr = try_voice_decode(s['freq'] / 1e6)
-                            break
-                    for s in above_threshold:
                         f = s['freq'] / 1e6
                         sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                        if sig_type == "Analog" and s['std'] < 4:
-                            play_voice_sample(f)
-                            if not vr:
-                                vr = "analog voice sample, saved to decoded folder"
+                        # Skip camera signals — handled by camera worker
+                        if is_camera_signal(f, s['std'], sig_type):
+                            continue
+                        if s['std'] < 6:
+                            vr = try_voice_decode(f)
                             break
+                    # If no voice found, try analog playback for non-camera signals
+                    if not vr:
+                        for s in above_threshold:
+                            f = s['freq'] / 1e6
+                            sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                            if is_camera_signal(f, s['std'], sig_type):
+                                continue
+                            if sig_type == "Analog" and s['std'] < 4:
+                                play_voice_sample(f)
+                                vr = "analog voice sample, saved to decoded folder"
+                                break
                 threading.Thread(target=_voice_worker, daemon=True, name="rflord-voice").start()
                 
                 count = len(above_threshold)
@@ -1839,23 +2092,39 @@ def main_curses(stdscr, devices):
                 _cursor_pos = max(0, _cursor_pos - 1)
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_down':
-                # Get current suspicious count
+                # Get max count for active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
-                _cursor_pos = min(len(sus_grp) - 1, _cursor_pos + 1)
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                                 key=lambda x: x['peak'], reverse=True)
+                ok_grp = group_signals_by_type(ok_list, artemis_db)
+                max_pos = len(sus_grp) - 1 if _cursor_panel == 'sus' else len(ok_grp) - 1
+                _cursor_pos = min(max_pos, _cursor_pos + 1)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+            elif key == 'cursor_left':
+                _cursor_panel = 'sus'
+                _cursor_pos = 0
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+            elif key == 'cursor_right':
+                _cursor_panel = 'ok'
+                _cursor_pos = 0
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_off':
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'details':
-                # Get the selected signal from suspicious list
+                # Get the selected signal from active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
-                if 0 <= _cursor_pos < len(sus_grp):
-                    # Get the strongest signal in the group
-                    g = sus_grp[_cursor_pos]
-                    _show_signal_detail(stdscr, g['_strongest'], artemis_db)
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                                 key=lambda x: x['peak'], reverse=True)
+                ok_grp = group_signals_by_type(ok_list, artemis_db)
+                active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
+                if 0 <= _cursor_pos < len(active_grp):
+                    g = active_grp[_cursor_pos]
+                    signal = g.get('_strongest', g)
+                    _show_signal_detail(stdscr, signal, artemis_db)
                     draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'export':
                 export_dir = os.path.expanduser(_cfg['export']['path'])
@@ -1996,8 +2265,11 @@ def main_ansi(device=None):
     
     signal.signal(signal.SIGINT, lambda *_: (sys.stdout.write("\033[?25h\033[H\033[J"), print(f"\n{C}Stopped.{N}"), sys.exit(0)))
     print("\033[2J\033[H\033[?25l", end="")
-    # Reset HackRF once at startup
+    # Kill stale hackrf processes + reset HackRF
     if device == "hackrf":
+        subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
+                       capture_output=True, timeout=5)
+        time.sleep(1)
         subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
         time.sleep(3)
 

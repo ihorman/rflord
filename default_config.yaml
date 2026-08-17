@@ -1,61 +1,67 @@
-scan:
-  bands:
-    - {start: 2400000000, stop: 2500000000, step: 1000000}
-    - {start: 5150000000, stop: 5850000000, step: 1000000}
-    - {start: 860000000, stop: 960000000, step: 1000000}
-    - {start: 1574000000, stop: 1576000000, step: 100000}
-    - {start: 1710000000, stop: 1785000000, step: 100000}
-    - {start: 1805000000, stop: 1880000000, step: 100000}
-    - {start: 2110000000, stop: 2170000000, step: 100000}
-  interval: 30
-  n_sweeps: 3
-
-voice:
-  enabled: true
-  threshold: -50
-  voice_name: en-US-SteffanNeural
-  rate: "-15%"
-  hal_effect: ~/.local/bin/hal-effect.sh
-
+blacklist:
+  file: ~/.config/rflord/ignore.conf
 display:
-  theme: dark
   max_rows: 19
-
-suppress:
-  targets:
-    - name: cellular
-      freq: 900000000
-      bw: 80000000
-    - name: cellular
-      freq: 1800000000
-      bw: 100000000
-    - name: cellular
-      freq: 2100000000
-      bw: 60000000
-    - name: bluetooth
-      freq: 2440000000
-      bw: 80000000
-    - name: gps
-      freq: 1575420000
-      bw: 2000000
-
-history:
-  enabled: true
-  db_path: ~/.local/share/rflord/signals.db
-  max_days: 30
-
+  theme: dark
 export:
   enabled: false
   format: csv
   path: ~/.local/share/rflord/exports/
-
-web:
-  enabled: false
-  port: 8080
-
-blacklist:
-  file: ~/.config/rflord/ignore.conf
-
+history:
+  db_path: ~/.local/share/rflord/signals.db
+  enabled: true
+  max_days: 30
+scan:
+  bands:
+  - start: 2400000000
+    step: 1000000
+    stop: 2500000000
+  - start: 5150000000
+    step: 1000000
+    stop: 5850000000
+  - start: 860000000
+    step: 1000000
+    stop: 960000000
+  - start: 1574000000
+    step: 100000
+    stop: 1576000000
+  - start: 1710000000
+    step: 100000
+    stop: 1785000000
+  - start: 1805000000
+    step: 100000
+    stop: 1880000000
+  - start: 2110000000
+    step: 100000
+    stop: 2170000000
+  interval: 30
+  n_sweeps: 3
 scan_acceleration:
   enabled: true
   skip_after_empty: 3
+suppress:
+  targets:
+  - bw: 80000000
+    freq: 900000000
+    name: cellular
+  - bw: 100000000
+    freq: 1800000000
+    name: cellular
+  - bw: 60000000
+    freq: 2100000000
+    name: cellular
+  - bw: 80000000
+    freq: 2440000000
+    name: bluetooth
+  - bw: 2000000
+    freq: 1575420000
+    name: gps
+voice:
+  enabled: true
+  hal_effect: ~/.local/bin/hal-effect.sh
+  rate: -15%
+  threshold: -50
+  voice_name: en-US-SteffanNeural
+web:
+  enabled: true
+  port: 8080

@@ -59,8 +59,9 @@ RFLord is a real-time RF spectrum monitor for the ClockworkPi uConsole with Hack
 | `m` | Mute/unmute voice alerts |
 | `s` | Suppress mode (jam selected bands) |
 | `+`/`-` | Increase/decrease scan interval |
-| `↑`/`↓` | Navigate suspicious signals |
-| `d` | Signal detail popup |
+| `↑`/`↓` | Navigate signals in active panel |
+| `←`/`→` | Switch between SUSPICIOUS/KNOWN panels |
+| `d` | Signal detail popup (full description, scrollable) |
 | `e` | Export current scan to CSV/JSON |
 | `l` | View system log |
 | `h` | View signal history |
@@ -204,6 +205,10 @@ python3 -m pytest tests/ -v
 - `test_hackrf_switcher.py` — Device detection, PortaPack switching
 - `test_table_alignment.py` — Column alignment, distance formatting
 - `test_new_modules.py` — Config, blacklist, scan acceleration, history
+
+## Author
+
+**Ihor Kolodyuk** — [github.com/ihorman](https://github.com/ihorman)
 
 ## Credits
 

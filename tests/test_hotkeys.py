@@ -143,6 +143,24 @@ class TestCursorActiveFlag:
         _read_key(mock_scr)
         assert rflord._cursor_active is False
 
+    def test_left_arrow_sets_cursor_active_and_returns_cursor_left(self):
+        import rflord, curses
+        rflord._cursor_active = False
+        mock_scr = MagicMock()
+        mock_scr.getch.return_value = curses.KEY_LEFT
+        result = _read_key(mock_scr)
+        assert rflord._cursor_active is True
+        assert result == 'cursor_left'
+
+    def test_right_arrow_sets_cursor_active_and_returns_cursor_right(self):
+        import rflord, curses
+        rflord._cursor_active = False
+        mock_scr = MagicMock()
+        mock_scr.getch.return_value = curses.KEY_RIGHT
+        result = _read_key(mock_scr)
+        assert rflord._cursor_active is True
+        assert result == 'cursor_right'
+
 
 class TestSuppressTargets:
     """Suppress target definitions and state management."""
@@ -183,10 +201,12 @@ class TestSuppressTargets:
 class TestSuppressMenu:
     """Suppress menu behavior — mock curses to avoid initscr."""
 
-    def test_menu_enter_closes(self):
+    def test_menu_enter_toggles(self):
+        import rflord
+        rflord._suppress_targets = {}
         mock_scr = MagicMock()
         mock_scr.getmaxyx.return_value = (24, 80)
-        mock_scr.getch.return_value = 10  # Enter
+        mock_scr.getch.side_effect = [10, 27]  # Enter toggles, ESC closes
 
         with patch('curses.color_pair', return_value=0), \
              patch('curses.A_BOLD', 0, create=True), \
@@ -194,6 +214,7 @@ class TestSuppressMenu:
             result = _show_suppress_menu(mock_scr)
 
         assert result is True
+        assert any(rflord._suppress_targets.values()), "Enter should toggle a target on"
 
     def test_menu_escape_closes(self):
         mock_scr = MagicMock()
@@ -211,7 +232,7 @@ class TestSuppressMenu:
         import curses
         mock_scr = MagicMock()
         mock_scr.getmaxyx.return_value = (24, 80)
-        mock_scr.getch.side_effect = [curses.KEY_DOWN, 10]
+        mock_scr.getch.side_effect = [curses.KEY_DOWN, 27]  # Down then ESC to close
 
         with patch('curses.color_pair', return_value=0), \
              patch('curses.A_BOLD', 0, create=True), \
@@ -226,7 +247,7 @@ class TestSuppressMenu:
 
         mock_scr = MagicMock()
         mock_scr.getmaxyx.return_value = (24, 80)
-        mock_scr.getch.side_effect = [ord(' '), 10]
+        mock_scr.getch.side_effect = [ord(' '), 27]  # Space toggles, ESC closes
 
         with patch('curses.color_pair', return_value=0), \
              patch('curses.A_BOLD', 0, create=True), \
@@ -578,8 +599,8 @@ class TestMainLoopKeyIntegration:
         """No commands handled in main loop that _read_key doesn't return."""
         all_read_key_commands = {
             'quit', 'rescan', 'mute', 'voice', 'interval_up', 'interval_down',
-            'suppress', 'cursor_up', 'cursor_down', 'cursor_off',
-            'details', 'export', 'log', 'history',
+            'suppress', 'cursor_up', 'cursor_down', 'cursor_left', 'cursor_right',
+            'cursor_off', 'details', 'export', 'log', 'history',
         }
         rflord_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rflord.py')
         with open(rflord_path) as f:

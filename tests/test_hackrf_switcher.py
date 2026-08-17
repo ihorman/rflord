@@ -135,10 +135,11 @@ class TestRTLSDRSweep:
             assert '108M' in cmd
 
     def test_hackrf_sweep_command(self):
-        with patch('rflord.run_cmd') as mock_run:
-            mock_run.return_value = ""
+        with patch('rflord.subprocess.run') as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="2024-01-01, 12:00:00, 88000000, 108000000, 2000000, 100, -30.0\n", stderr="")
             from rflord import hackrf_sweep
-            hackrf_sweep(88e6, 108e6)
+            hackrf_sweep(88, 108)
 
             cmd = mock_run.call_args[0][0]
             assert 'hackrf_sweep' in cmd
+            assert '-f 88:108' in cmd
