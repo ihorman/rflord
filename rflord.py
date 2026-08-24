@@ -354,7 +354,41 @@ def group_suspicious(signals, artemis_db=None):
             art = None
         else:
             art = identify_signal(f_strong, artemis_db) if artemis_db else None
-        remark = art.get('description', '') if art else ''
+        
+        # Build remark from multiple sources
+        remark = ''
+        if art:
+            remark = art.get('description', '') or ''
+        
+        # If no remark from Artemis, try rf_protocols
+        if not remark:
+            try:
+                from rf_protocols import identify_by_freq
+                protos = identify_by_freq(f_strong, tolerance_mhz=0.5)
+                if protos:
+                    p = protos[0]
+                    parts = []
+                    if p.get('manufacturer'): parts.append(p['manufacturer'])
+                    if p.get('modulation'): parts.append(p['modulation'])
+                    if p.get('category'): parts.append(p['category'])
+                    remark = ' | '.join(parts)
+            except: pass
+        
+        # If still no remark, try signatures DB (non-surveillance)
+        if not remark:
+            try:
+                from signatures_db import SignaturesDB
+                db = SignaturesDB()
+                sigs_db = db.identify_freq(f_strong, tolerance_mhz=1.0)
+                db.close()
+                if sigs_db:
+                    for s in sigs_db:
+                        cat = s.get('category', '')
+                        if cat not in ('surveillance', 'signal'):
+                            remark = cat
+                            break
+            except: pass
+        
         result.append({
             'type': key,
             'count': len(sigs),
