@@ -1060,6 +1060,8 @@ def _read_key(stdscr):
             return 'cursor_right'
         elif key == ord('d') or key == ord('D'):
             return 'details'
+        elif key == ord('c') or key == ord('C'):
+            return 'capture'
         elif key == ord('e') or key == ord('E'):
             return 'export'
         elif key == ord('l') or key == ord('L'):
@@ -1649,7 +1651,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                 cur_str = ""
         else:
             cur_str = ""
-        keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ←→:Panel  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
+        keys = f" q:Quit  r:Rescan  c:Capture  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ←→:Panel  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
         stdscr.addstr(row, 0, (keys[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_DIM))
     except: pass
     
@@ -2041,10 +2043,25 @@ def main_curses(stdscr, devices):
             cleanup_old_decoded()
             cleanup_old_logs()
         
-        # Camera screenshot: ALWAYS capture for every detected hidden camera/FPV
-        camera_signals = [s for s in new_suspicious
-                          if is_camera_signal(s['freq']/1e6, s['std'],
-                                              get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))]
+        # Camera screenshot: capture for ALL detected hidden camera/FPV signals
+        # with cooldown to avoid capturing same frequency too often
+        if not hasattr(main_curses, '_last_capture'):
+            main_curses._last_capture = {}
+        CAMERA_COOLDOWN = 120  # seconds between captures of same frequency
+        
+        all_camera_signals = [s for s in unique
+                              if is_camera_signal(s['freq']/1e6, s['std'],
+                                                  get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))]
+        # Filter by cooldown
+        now_ts = time.time()
+        camera_signals = []
+        for s in all_camera_signals:
+            freq_key = round(s['freq'] / 1e6)
+            last = main_curses._last_capture.get(freq_key, 0)
+            if now_ts - last > CAMERA_COOLDOWN:
+                camera_signals.append(s)
+                main_curses._last_capture[freq_key] = now_ts
+        
         if camera_signals:
             def _camera_worker(sigs):
                 for s in sigs:
@@ -2213,6 +2230,50 @@ def main_curses(stdscr, devices):
                     signal = g.get('_strongest', g)
                     _show_signal_detail(stdscr, signal, artemis_db)
                     draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+            elif key == 'capture':
+                # Capture screenshot from selected signal (camera/FPV)
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                sus_grp = group_suspicious(sus_list, artemis_db)
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                                 key=lambda x: x['peak'], reverse=True)
+                ok_grp = group_signals_by_type(ok_list, artemis_db)
+                active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
+                if 0 <= _cursor_pos < len(active_grp):
+                    g = active_grp[_cursor_pos]
+                    signal = g.get('_strongest', g)
+                    f = signal['freq'] / 1e6
+                    # Show status
+                    try:
+                        h, w = stdscr.getmaxyx()
+                        status = f" Capturing screenshot at {f:.1f} MHz... "
+                        stdscr.addstr(0, 0, status.ljust(w-1), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
+                        stdscr.refresh()
+                    except: pass
+                    # Capture in background thread
+                    def _capture_worker(freq):
+                        try:
+                            screenshot = try_fpv_decode(freq)
+                            if screenshot:
+                                log.warning(f"CAPTURE: screenshot saved {screenshot}")
+                                # Show result
+                                try:
+                                    h, w = stdscr.getmaxyx()
+                                    msg = f" Screenshot saved: {os.path.basename(screenshot)} "
+                                    stdscr.addstr(0, 0, msg.ljust(w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+                                    stdscr.refresh()
+                                except: pass
+                            else:
+                                log.info(f"CAPTURE: no video frame at {freq:.1f} MHz")
+                                try:
+                                    h, w = stdscr.getmaxyx()
+                                    msg = f" No video signal found at {freq:.1f} MHz "
+                                    stdscr.addstr(0, 0, msg.ljust(w-1), curses.color_pair(CP_SUS_YEL) | curses.A_BOLD)
+                                    stdscr.refresh()
+                                except: pass
+                        except Exception as e:
+                            log.warning(f"CAPTURE exception: {e}")
+                    threading.Thread(target=_capture_worker, args=(f,), daemon=True, name="rflord-capture").start()
             elif key == 'export':
                 export_dir = os.path.expanduser(_cfg['export']['path'])
                 os.makedirs(export_dir, exist_ok=True)
