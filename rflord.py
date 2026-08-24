@@ -1276,76 +1276,95 @@ def identify_signal(freq_mhz, artemis_db):
     return best
 
 def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
-    """Classify signal type. Military rules first, then Artemis, then fallback."""
+    """Identify signal type using heuristic approach.
     
-    # Military UHF band — hardcoded rules take priority over Artemis
-    if 225 <= freq_mhz <= 400:
-        if 255 <= freq_mhz <= 267: return "Link-11"
-        if 270 <= freq_mhz <= 285: return "Link-11"
-        if 300 <= freq_mhz <= 330: return "Mil/Enc"
-        if 243 <= freq_mhz <= 244: return "Milstar"
-        if 264 <= freq_mhz <= 266: return "Gonets"
-        if std > 3: return "Link-11"
-        if std < 2: return "Mil/Enc"
-        return "Mil/Enc"
+    Priority:
+    1. rf_protocols DB (specific protocol matches)
+    2. Known frequency bands (WiFi, GSM, aviation, etc.)
+    3. Signatures DB (non-surveillance entries only)
+    4. Signal characteristics (narrowband + strong = suspicious)
+    """
     
-    # Use new identify_signal_type for common signals
-    sig_type = identify_signal_type(freq_mhz, -50, std)  # Use dummy power
+    # === STEP 1: Check rf_protocols for specific matches ===
+    try:
+        from rf_protocols import identify_by_freq
+        protos = identify_by_freq(freq_mhz, tolerance_mhz=0.5)
+        if protos:
+            name = protos[0].get('name', protos[0].get('protocol', ''))
+            if name:
+                return name[:20]
+    except: pass
     
-    # Override with more specific classifications
-    if 240 <= freq_mhz <= 242: return "DAB"
-    elif 235 <= freq_mhz <= 238: return "DAB+"
-    elif 390 <= freq_mhz <= 400: return "TETRA"
-    elif 337 <= freq_mhz <= 362: return "Keyfob"
+    # === STEP 2: Known frequency bands ===
     
-    # Check Artemis database for non-military bands
-    if artemis_db:
-        art_entry = identify_signal(freq_mhz, artemis_db)
-        if art_entry:
-            return art_entry['name'][:18]
+    # Cellular
+    if 935 <= freq_mhz <= 960: return "GSM900"
+    if 1805 <= freq_mhz <= 1880: return "GSM1800"
+    if 2110 <= freq_mhz <= 2170: return "3G/LTE"
+    if 791 <= freq_mhz <= 862: return "LTE800"
+    if 2620 <= freq_mhz <= 2690: return "LTE2600"
     
-    # Known real signals (continued)
-    if 140 <= freq_mhz <= 150 and std < 2:
-        return "Mil/Enc"
-    elif 150 <= freq_mhz <= 174 and std < 2:
-        return "Mil/Enc"
-    elif 174 <= freq_mhz <= 230:
-        return "DAB+"
-    elif 230 <= freq_mhz <= 285:
-        return "Display Port"
-    elif 470 <= freq_mhz <= 790:
-        if std > 3:
-            return "DVB-T2"
-        elif std < 2:
-            return "CAM-DTV?"
-        else:
-            return "DVB-T2"
-    elif 612 <= freq_mhz <= 700:
-        if bw < 10000: return "USB-noise"
-        else: return "USB-burst"
-    elif 900 <= freq_mhz <= 928 and std < 2:
-        return "CAM?"
-    elif 1080 <= freq_mhz <= 1300 and std < 2:
-        return "SPY-CAM"
-    elif 2410 <= freq_mhz <= 2483 and std < 2 and bw and bw < 100000:
-        return "CAM?"
-    elif 5725 <= freq_mhz <= 5875 and std < 2:
-        return "FPV"
-    elif 5150 <= freq_mhz <= 5725:
-        return "WiFi 5GHz"
-    elif 5725 <= freq_mhz <= 5875:
-        if std < 3:
-            return "FPV/WiFi"
-        else:
-            return "WiFi 5GHz"
-    elif 2400 <= freq_mhz <= 2500:
-        return "WiFi/BT"
-    elif 1200 <= freq_mhz <= 1400 and std < 2:
-        return "SPY-CAM"
-    elif std < 2: return "CW"
-    elif pmr > 8: return "Digital"
-    elif pmr > 4: return "Bursty"
-    else: return "Analog"
+    # WiFi 2.4 GHz
+    wifi_ch = {1:2412, 2:2417, 3:2422, 4:2427, 5:2432, 6:2437, 7:2442, 8:2447, 9:2452, 10:2457, 11:2462, 12:2467, 13:2472}
+    for ch, center in wifi_ch.items():
+        if abs(freq_mhz - center) < 3:
+            return f"WiFi Ch{ch}"
+    if 2400 <= freq_mhz <= 2500: return "WiFi 2.4GHz"
+    
+    # WiFi 5 GHz
+    if 5150 <= freq_mhz <= 5725: return "WiFi 5GHz"
+    if 5725 <= freq_mhz <= 5875:
+        if std < 2: return "FPV"
+        elif std < 3: return "FPV/WiFi"
+        else: return "WiFi 5GHz"
+    
+    # FM Radio
+    if 88 <= freq_mhz <= 108: return "FM Radio"
+    
+    # DAB/DVB-T
+    if 174 <= freq_mhz <= 230: return "DAB/DVB-T"
+    if 470 <= freq_mhz <= 790:
+        if std > 3: return "DVB-T2"
+        elif std < 2: return "DVB-T2/Narrow"
+        else: return "DVB-T2"
+    
+    # Aviation
+    if 108 <= freq_mhz <= 137: return "Air Band"
+    if 1089 <= freq_mhz <= 1091: return "ADS-B"
+    if 1574 <= freq_mhz <= 1576: return "GPS L1"
+    
+    # Amateur/PMR
+    if 144 <= freq_mhz <= 148: return "2m Ham"
+    if 430 <= freq_mhz <= 470: return "70cm/PMR"
+    if 446 <= freq_mhz <= 447: return "PMR446"
+    if 462 <= freq_mhz <= 468: return "FRS/GMRS"
+    
+    # ISM
+    if 433 <= freq_mhz <= 435: return "ISM433"
+    if 868 <= freq_mhz <= 870: return "ISM868"
+    if 915 <= freq_mhz <= 928: return "ISM915"
+    
+    # Military
+    if 225 <= freq_mhz <= 400: return "Mil UHF"
+    
+    # === STEP 3: Signatures DB (non-surveillance) ===
+    try:
+        from signatures_db import SignaturesDB
+        db = SignaturesDB()
+        sigs = db.identify_freq(freq_mhz, tolerance_mhz=1.0)
+        db.close()
+        if sigs:
+            # Filter out generic "surveillance" entries
+            for s in sigs:
+                cat = s.get('category', '')
+                name = s.get('name', '')
+                if cat not in ('surveillance', 'signal'):
+                    return name[:20]
+    except: pass
+    
+    # === STEP 4: Unknown ===
+    if std < 2: return "CW/Carrier"
+    return "Unknown"
 
 def ensure_decoded_dir():
     os.makedirs(os.path.join(DECODED_DIR, "screenshots"), exist_ok=True)
