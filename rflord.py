@@ -1466,6 +1466,22 @@ def play_voice_sample(freq_mhz):
     except Exception as e:
         log.warning(f"VOICE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
 
+def is_voice_signal(freq_mhz, std, sig_type=""):
+    """Check if signal is likely a voice radio (PMR, ham, air band, etc.)."""
+    sig_lower = sig_type.lower()
+    voice_keywords = ["pmr", "ham", "air band", "fm radio", "nfm", "analog", "frs", "gmrs", "marine", "vhf", "uhf"]
+    if any(kw in sig_lower for kw in voice_keywords):
+        return True
+    # By frequency — known voice bands
+    if 144 <= freq_mhz <= 148: return True  # 2m ham
+    if 430 <= freq_mhz <= 470: return True  # 70cm/PMR
+    if 446 <= freq_mhz <= 447: return True  # PMR446
+    if 462 <= freq_mhz <= 468: return True  # FRS/GMRS
+    if 108 <= freq_mhz <= 137: return True  # Air band
+    if 150 <= freq_mhz <= 174: return True  # VHF commercial
+    if 450 <= freq_mhz <= 470: return True  # UHF commercial
+    return False
+
 def is_camera_signal(freq_mhz, std, sig_type=""):
     """Check if signal is a hidden camera or FPV video transmitter."""
     # By signal type label
@@ -1791,6 +1807,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     voice_str = "ON" if voice_enabled else "OFF"
     sup_str = "ON" if _suppress_active else "OFF"
+    peri_str = "ON" if perimeter.active else "OFF"
     cur_str = ""
     if _cursor_active:
         if _cursor_panel == 'sus' and sus_grouped:
@@ -1908,6 +1925,9 @@ def main_curses(stdscr, devices):
 
     # Initialize rule engine for unified threat assessment
     rule_engine = RuleEngine()
+    
+    # Initialize perimeter mode
+    perimeter = PerimeterMode()
     wifi_iface = "wlan0"  # Default WiFi interface
     # Detect WiFi interface (cross-platform)
     try:
@@ -2165,6 +2185,13 @@ def main_curses(stdscr, devices):
                     log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f" % (f, s["peak"], s["std"]))
                     alert_count += 1
         
+        # Perimeter Secured mode — auto-jam new suspicious signals
+        if perimeter.active:
+            newly_jammed = perimeter.process_scan(unique, known_freqs, classify)
+            for f in newly_jammed:
+                alert_count += 1
+                log.warning(f"PERIMETER: auto-jammed {f:.1f} MHz")
+        
         # Update "last seen" for ALL signals
         now = time.time()
         for s in unique:
@@ -2223,6 +2250,34 @@ def main_curses(stdscr, devices):
                         log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
             threading.Thread(target=_camera_worker, args=(camera_signals,),
                              daemon=True, name="rflord-camera").start()
+        
+        # Voice signal auto-capture: detect and play voice radio signals
+        if not hasattr(main_curses, '_last_voice'):
+            main_curses._last_voice = {}
+        VOICE_COOLDOWN = 60  # seconds between captures of same frequency
+        
+        all_voice_signals = [s for s in unique
+                             if is_voice_signal(s['freq']/1e6, s['std'],
+                                                get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))
+                             and s['peak'] > VOICE_THRESHOLD]
+        # Filter by cooldown
+        voice_signals = []
+        for s in all_voice_signals:
+            freq_key = round(s['freq'] / 1e6)
+            last = main_curses._last_voice.get(freq_key, 0)
+            if now_ts - last > VOICE_COOLDOWN:
+                voice_signals.append(s)
+                main_curses._last_voice[freq_key] = now_ts
+        
+        if voice_signals and voice_enabled:
+            def _voice_capture_worker(sigs):
+                for s in sigs:
+                    f = s['freq'] / 1e6
+                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    log.info(f"VOICE SIGNAL: {sig_type} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing audio")
+                    play_voice_sample(f)
+            threading.Thread(target=_voice_capture_worker, args=(voice_signals,),
+                             daemon=True, name="rflord-voice-auto").start()
         
         # Voice alert
         if new_suspicious and voice_enabled:
@@ -2338,6 +2393,19 @@ def main_curses(stdscr, devices):
                 else:
                     _suppress_active = False
                     _suppress_stop()
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+            elif key == 'perimeter':
+                if not has_hackrf:
+                    log.warning("PERIMETER: HackRF required for perimeter mode")
+                else:
+                    perimeter.active = not perimeter.active
+                    if perimeter.active:
+                        log.warning("PERIMETER: SECURED MODE ACTIVATED")
+                        speak("Perimeter secured mode activated")
+                    else:
+                        perimeter.stop_all()
+                        log.warning("PERIMETER: SECURED MODE DEACTIVATED")
+                        speak("Perimeter secured mode deactivated")
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
             elif key == 'cursor_up':
                 _cursor_pos = max(0, _cursor_pos - 1)
