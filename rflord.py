@@ -2439,7 +2439,12 @@ def main():
     print(f"SDR devices: {', '.join(devices)}", flush=True)
 
     # Set ESCDELAY for faster escape sequence handling (default is 1000ms!)
-    os.environ.setdefault('ESCDELAY', '25')
+    os.environ['ESCDELAY'] = '0'
+    # Also try to set it via curses API if available
+    try:
+        curses.set_escdelay(0)
+    except:
+        pass
 
     # Try curses first (proper terminal), fallback to ANSI
     try:
