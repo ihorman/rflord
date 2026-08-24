@@ -364,7 +364,7 @@ def group_suspicious(signals, artemis_db=None):
         if not remark:
             try:
                 from rf_protocols import identify_by_freq
-                protos = identify_by_freq(f_strong, tolerance_mhz=0.5)
+                protos = identify_by_freq(f_strong, tolerance_mhz=1.0)
                 if protos:
                     p = protos[0]
                     parts = []
@@ -374,7 +374,7 @@ def group_suspicious(signals, artemis_db=None):
                     remark = ' | '.join(parts)
             except: pass
         
-        # If still no remark, try signatures DB (non-surveillance)
+        # If still no remark, try signatures DB
         if not remark:
             try:
                 from signatures_db import SignaturesDB
@@ -382,10 +382,16 @@ def group_suspicious(signals, artemis_db=None):
                 sigs_db = db.identify_freq(f_strong, tolerance_mhz=1.0)
                 db.close()
                 if sigs_db:
+                    # Use the first non-generic match
                     for s in sigs_db:
+                        name = s.get('name', '')
                         cat = s.get('category', '')
-                        if cat not in ('surveillance', 'signal'):
-                            remark = cat
+                        # Skip generic entries
+                        if name and name not in ('Unknown', 'signal'):
+                            if cat and cat not in ('surveillance', 'signal'):
+                                remark = f"{name} [{cat}]"
+                            else:
+                                remark = name
                             break
             except: pass
         
@@ -1543,6 +1549,33 @@ def is_camera_signal(freq_mhz, std, sig_type=""):
         if 2410 <= freq_mhz <= 2483: return True
     return False
 
+def is_critical_signal(freq_mhz, power_dbfs, std, sig_type=""):
+    """Check if signal is a critical threat (FPV drone, camera, military at close range).
+    Returns (is_critical, reason) tuple."""
+    sig_lower = sig_type.lower()
+    
+    # FPV drone — CRITICAL
+    fpv_keywords = ["fpv", "analog fpv", "expresslrs", "elrs", "tbs crossfire", "tracer"]
+    if any(kw in sig_lower for kw in fpv_keywords):
+        return True, "FPV DRONE"
+    if 1080 <= freq_mhz <= 1300 and std < 3 and power_dbfs > -40:
+        return True, "FPV 1.2GHz"
+    if 5725 <= freq_mhz <= 5875 and std < 3 and power_dbfs > -40:
+        return True, "FPV 5.8GHz"
+    if 900 <= freq_mhz <= 928 and std < 3 and power_dbfs > -40:
+        return True, "FPV 900MHz"
+    
+    # Hidden camera — HIGH
+    cam_keywords = ["camera", "spy cam", "hidden cam", "covert video"]
+    if any(kw in sig_lower for kw in cam_keywords):
+        return True, "HIDDEN CAMERA"
+    
+    # Military at close range — CRITICAL
+    if 225 <= freq_mhz <= 400 and power_dbfs > -25:
+        return True, "MILITARY CLOSE RANGE"
+    
+    return False, ""
+
 def try_fpv_decode(freq_mhz):
     """Try to decode FPV/spy camera video signal and save a screenshot."""
     try:
@@ -2295,6 +2328,34 @@ def main_curses(stdscr, devices):
                         log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
             threading.Thread(target=_camera_worker, args=(camera_signals,),
                              daemon=True, name="rflord-camera").start()
+        
+        # CRITICAL ALERT: FPV drone, camera, military at close range
+        if not hasattr(main_curses, '_last_critical'):
+            main_curses._last_critical = {}
+        CRITICAL_COOLDOWN = 30  # seconds between critical alerts for same freq
+        
+        for s in unique:
+            f = s['freq'] / 1e6
+            sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+            is_crit, reason = is_critical_signal(f, s['peak'], s['std'], sig_type)
+            if is_crit:
+                freq_key = round(f)
+                last = main_curses._last_critical.get(freq_key, 0)
+                if now_ts - last > CRITICAL_COOLDOWN:
+                    main_curses._last_critical[freq_key] = now_ts
+                    dist = est_distance(f, s['peak'])
+                    # HAL9000 voice alert
+                    alert_msg = f"Warning. {reason} detected at {f:.0f} megahertz. Distance {dist}. Threat level critical."
+                    log.warning(f"CRITICAL ALERT: {reason} at {f:.1f} MHz, {dist}")
+                    if voice_enabled:
+                        speak(alert_msg)
+                    # Auto-screenshot for FPV/camera
+                    if is_camera_signal(f, s['std'], sig_type):
+                        def _crit_cam_worker(freq):
+                            screenshot = try_fpv_decode(freq)
+                            if screenshot:
+                                log.warning(f"CRITICAL: screenshot saved {screenshot}")
+                        threading.Thread(target=_crit_cam_worker, args=(f,), daemon=True, name="rflord-crit-cam").start()
         
         # Voice signal auto-capture: detect and play voice radio signals
         if not hasattr(main_curses, '_last_voice'):
