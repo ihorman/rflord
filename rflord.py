@@ -1042,6 +1042,9 @@ def _read_key(stdscr):
         if key == -1:
             return None
         
+        # Debug: log key codes
+        log.debug(f"_read_key: got key={key} (0x{key:02x})")
+        
         # Handle escape sequences manually for terminals that don't translate them
         if key == 27:  # ESC
             # Small delay to let the rest of the escape sequence arrive
@@ -1050,6 +1053,7 @@ def _read_key(stdscr):
             # Check if there are more characters in the buffer (escape sequence)
             stdscr.nodelay(True)
             next_key = stdscr.getch()
+            log.debug(f"_read_key: ESC next_key={next_key} (0x{next_key:02x})")
             if next_key == -1:
                 # Just ESC key pressed
                 _cursor_active = False
@@ -1058,6 +1062,7 @@ def _read_key(stdscr):
                 # ESC [ is the start of a CSI sequence
                 time.sleep(0.01)
                 third_key = stdscr.getch()
+                log.debug(f"_read_key: ESC [ third_key={third_key} (0x{third_key:02x})")
                 if third_key == ord('A'):  # ESC [ A = Up
                     _cursor_active = True
                     return 'cursor_up'
@@ -1084,6 +1089,7 @@ def _read_key(stdscr):
                 # ESC O is SS3 sequence (some terminals)
                 time.sleep(0.01)
                 third_key = stdscr.getch()
+                log.debug(f"_read_key: ESC O third_key={third_key} (0x{third_key:02x})")
                 if third_key == ord('A'):  # ESC O A = Up
                     _cursor_active = True
                     return 'cursor_up'
