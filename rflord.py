@@ -1672,9 +1672,9 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     # Sub-headers — full width
     try:
-        left_hdr = f"!    {'Freq':>5} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Type':<14} Desc"
+        left_hdr = f"!  {'Freq':>7} {'Pwr':>6} {'Std':>5} {'Dist':>6} {'Type':<16} Description"
         stdscr.addstr(row, 0, left_hdr[:mid-1].ljust(mid-1), curses.color_pair(CP_DIM))
-        right_hdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
+        right_hdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>6} {'Bnd':>5} {'Type':<20}"
         stdscr.addstr(row, mid, right_hdr[:effective_w-mid-1].ljust(effective_w-mid-1), curses.color_pair(CP_DIM))
     except: pass
     row += 1
@@ -1695,14 +1695,15 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         # Left — suspicious (grouped)
         if i < len(sus_grouped):
             g = sus_grouped[i]
-            cnt = f"x{g['count']}" if g['count'] > 1 else ""
             cls = g['classify']
             if cls == "danger":
                 cp = CP_DANGER
             else:
                 cp = CP_SUS_RED
-            remark_w = max(20, mid - 38)
-            remark = g['remark'][:remark_w]
+            # Calculate description width based on available space
+            fixed_w = 48  # Fixed columns width
+            desc_w = max(10, mid - fixed_w - 2)
+            desc = g.get('remark', '')[:desc_w]
             sev = '!!!' if cls == 'danger' else ('!! ' if cls == 'sus' else '!  ')
             # Trend arrow
             trend = ''
@@ -1722,7 +1723,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                     log.debug(f"Trend arrow error: {ex}")
             # Cursor indicator — left panel (suspicious)
             cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'sus' and i == _cursor_pos) else ' '
-            line = f"{cursor_mark}{sev} {g['freq']:>5.1f} {g['peak']:>+5.1f} {g['std']:>4.1f} {g['dist']:>5} {g['type']:<14} {remark}{trend}"
+            line = f"{cursor_mark}{sev} {g['freq']:>7.1f} {g['peak']:>+6.1f} {g['std']:>5.1f} {g['dist']:>6} {g['type']:<16} {desc}{trend}"
             try:
                 attr = curses.color_pair(cp) | curses.A_BOLD
                 if _cursor_active and _cursor_panel == 'sus' and i == _cursor_pos:
@@ -1736,10 +1737,11 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             cnt = f"x{g['count']}" if g['count'] > 1 else ""
             # Cursor indicator — right panel (known)
             cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'ok' and i == _cursor_pos) else ' '
-            # Right table: cnt(4)+sp+pwr(6)+sp+dist(5)+sp+band(4)+sp = 21 fixed
-            id_w = max(20, (effective_w - mid) - 22)
-            type_str = g['type'][:id_w]
-            line = f"{cursor_mark}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}"
+            # Calculate type width based on available space
+            fixed_w = 22  # Fixed columns width
+            type_w = max(10, (effective_w - mid) - fixed_w - 2)
+            type_str = g['type'][:type_w]
+            line = f"{cursor_mark}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>6} {g['band']:>5} {type_str}"
             try:
                 attr = curses.color_pair(CP_OK)
                 if _cursor_active and _cursor_panel == 'ok' and i == _cursor_pos:
