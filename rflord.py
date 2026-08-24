@@ -35,7 +35,7 @@ from rule_engine import RuleEngine
 
 # Load config
 _cfg = load_config()
-VERSION = "v0.7.0"
+VERSION = "v0.8.0"
 _key_cmd = None
 INTERVAL = _cfg['scan']['interval']
 
@@ -2145,7 +2145,9 @@ def main_curses(stdscr, devices):
             history.record_scan(unique, device)
 
         # Web dashboard update — pass grouped data same as curses
+        log.info(f"WEB_CHECK: web_dash={web_dash}, type={type(web_dash).__name__}")
         if web_dash:
+            log.info(f"WEB_UPDATE: {len(unique)} unique signals, web_dash={web_dash}")
             sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                               key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
             ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
