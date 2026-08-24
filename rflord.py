@@ -483,8 +483,10 @@ def classify(f, power, std):
     if 510 <= f <= 610:
         return "ok"
     
-    # Military (known frequencies)
+    # Military — suspicious if strong (potential threat)
     if 225 <= f <= 400:
+        if power > -30:
+            return "sus"
         return "ok"
     
     # === POTENTIALLY SUSPICIOUS ===
