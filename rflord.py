@@ -92,53 +92,124 @@ def run_cmd(cmd, timeout=60):
     except:
         return ""
 
+def _find_binary(name):
+    """Find binary in PATH. Returns full path or None."""
+    from shutil import which
+    return which(name)
+
+# Auto-detect binary paths once at import time
+HACKRF_SWEEP_BIN = _find_binary("hackrf_sweep") or "/usr/bin/hackrf_sweep"
+HACKRF_INFO_BIN = _find_binary("hackrf_info") or "hackrf_info"
+RTL_POWER_BIN = _find_binary("rtl_power") or "/usr/local/bin/rtl_power"
+IS_MACOS = sys.platform == "darwin"
+IS_LINUX = sys.platform.startswith("linux")
+
+def _get_usb_devices():
+    """Get USB device list, cross-platform."""
+    if IS_MACOS:
+        out = run_cmd("system_profiler SPUSBDataType 2>/dev/null")
+        return out
+    else:
+        return run_cmd("lsusb")
+
+def _has_hackrf_in_usb(usb_output):
+    """Check if HackRF is present in USB output."""
+    if IS_MACOS:
+        return "HackRF" in usb_output or "1d50:6089" in usb_output or "Product ID: 0x6089" in usb_output
+    else:
+        return "1d50:6089" in usb_output
+
+def _has_portapack_in_usb(usb_output):
+    """Check if PortaPack (HackRF in PortaPack mode) is present."""
+    if IS_MACOS:
+        return "PortaPack" in usb_output or "1d50:6018" in usb_output or "Product ID: 0x6018" in usb_output
+    else:
+        return "1d50:6018" in usb_output
+
+def _has_rtlsdr_in_usb(usb_output):
+    """Check if RTL-SDR is present in USB output."""
+    if IS_MACOS:
+        return "RTL" in usb_output or "0bda:2838" in usb_output or "Product ID: 0x2838" in usb_output
+    else:
+        return "0bda:2838" in usb_output
+
 def detect_device():
-    """Detect available SDR devices. Returns list of device names."""
-    lsusb = run_cmd("lsusb")
+    """Detect available SDR devices. Returns list of device names.
+
+    Cross-platform: uses hackrf_info (all), system_profiler (macOS), lsusb (Linux).
+    """
     devices = []
-    if "1d50:6018" in lsusb:
+
+    # Method 1: Try hackrf_info directly (most reliable, works on all platforms)
+    try:
+        r = subprocess.run([HACKRF_INFO_BIN], capture_output=True, text=True, timeout=10)
+        if r.returncode == 0 and "Found HackRF" in r.stdout:
+            print("HackRF detected via hackrf_info", flush=True)
+            devices.append("hackrf")
+    except Exception as e:
+        log.debug(f"hackrf_info failed: {e}")
+
+    # Method 2: USB enumeration for PortaPack mode switch and RTL-SDR
+    usb_output = _get_usb_devices()
+
+    # PortaPack mode switch (PortaPack shows as 1d50:6018, need to switch to HackRF mode 1d50:6089)
+    if not devices and _has_portapack_in_usb(usb_output):
         print("PortaPack detected, switching to HackRF mode...", flush=True)
-        import serial
-        for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
-            try:
-                print(f"  Trying {port}...", flush=True)
-                s = serial.Serial(port, 115200, timeout=2)
-                time.sleep(0.5)
-                s.write(b'restore\r\n')
-                time.sleep(1.5)
-                s.read(s.in_waiting or 500)
-                s.write(b'hackrf\r\n')
-                time.sleep(3)
-                s.read(s.in_waiting or 500)
-                s.close()
-                print(f"  Sent mode switch on {port}", flush=True)
-                time.sleep(2)
-                lsusb = run_cmd("lsusb")
-                if "1d50:6089" in lsusb:
-                    print("  Switched to HackRF mode!", flush=True)
-                    break
-            except Exception as e:
-                print(f"  {port} failed: {e}", flush=True)
-        else:
-            time.sleep(5)
-            lsusb = run_cmd("lsusb")
-            if "1d50:6089" not in lsusb:
-                print("  Switch failed. Trying usbreset...", flush=True)
+        if IS_LINUX:
+            import serial
+            for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
+                try:
+                    print(f"  Trying {port}...", flush=True)
+                    s = serial.Serial(port, 115200, timeout=2)
+                    time.sleep(0.5)
+                    s.write(b'restore\r\n')
+                    time.sleep(1.5)
+                    s.read(s.in_waiting or 500)
+                    s.write(b'hackrf\r\n')
+                    time.sleep(3)
+                    s.read(s.in_waiting or 500)
+                    s.close()
+                    print(f"  Sent mode switch on {port}", flush=True)
+                    time.sleep(2)
+                    # Re-check
+                    try:
+                        r = subprocess.run([HACKRF_INFO_BIN], capture_output=True, text=True, timeout=10)
+                        if r.returncode == 0 and "Found HackRF" in r.stdout:
+                            print("  Switched to HackRF mode!", flush=True)
+                            devices.append("hackrf")
+                            break
+                    except: pass
+                except Exception as e:
+                    print(f"  {port} failed: {e}", flush=True)
+            else:
+                # Try usbreset as last resort
                 try:
                     subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
                     time.sleep(3)
-                    lsusb = run_cmd("lsusb")
+                    r = subprocess.run([HACKRF_INFO_BIN], capture_output=True, text=True, timeout=10)
+                    if r.returncode == 0 and "Found HackRF" in r.stdout:
+                        devices.append("hackrf")
                 except: pass
-    if "1d50:6089" in lsusb:
-        devices.append("hackrf")
-    if "0bda:2838" in lsusb:
+        else:
+            print("  PortaPack mode switch not supported on macOS (reconnect in HackRF mode)", flush=True)
+
+    # RTL-SDR detection
+    if _has_rtlsdr_in_usb(usb_output):
         devices.append("rtlsdr")
+    elif IS_LINUX:
+        # Fallback: try rtl_test
+        try:
+            r = subprocess.run(["rtl_test", "-t"], capture_output=True, text=True, timeout=5)
+            if "Found" in r.stdout:
+                devices.append("rtlsdr")
+        except: pass
+
     if not devices:
-        print(f"SDR not found. USB devices: {lsusb[:200]}", flush=True)
+        print(f"SDR not found. USB devices: {usb_output[:300]}", flush=True)
     return devices
 
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
-    cmd = f"/usr/bin/hackrf_sweep -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n}"
+    cmd = f"{HACKRF_SWEEP_BIN} -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n}"
     try:
         r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
         if r.returncode != 0:
@@ -158,7 +229,7 @@ def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
 
 def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
     """RTL-SDR sweep using rtl_power. f_lo/f_hi in MHz (same as hackrf_sweep)."""
-    cmd = f"/usr/local/bin/rtl_power -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e 2s 2>/dev/null | grep '^[0-9]'"
+    cmd = f"{RTL_POWER_BIN} -f {f_lo}M:{f_hi}M:2.4M -g {gain} -e 2s 2>/dev/null | grep '^[0-9]'"
     return run_cmd(cmd, timeout=60)
 
 def parse_sweep(output):
@@ -1282,7 +1353,7 @@ def try_fpv_decode(freq_mhz):
 
 def try_voice_decode(freq_mhz):
     try:
-        scripts = "/home/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
+        scripts = "/Users/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
         cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
         log.info(f"VOICE DECODE: running {cmd}")
         r = run_cmd(cmd, timeout=15)
@@ -1684,12 +1755,16 @@ def main_curses(stdscr, devices):
     # Initialize rule engine for unified threat assessment
     rule_engine = RuleEngine()
     wifi_iface = "wlan0"  # Default WiFi interface
-    # Detect WiFi interface
+    # Detect WiFi interface (cross-platform)
     try:
-        import glob as _glob
-        wifi_ifaces = _glob.glob("/sys/class/net/wl*")
-        if wifi_ifaces:
-            wifi_iface = os.path.basename(wifi_ifaces[0])
+        if IS_MACOS:
+            # macOS: en0 is typically WiFi
+            wifi_iface = "en0"
+        else:
+            import glob as _glob
+            wifi_ifaces = _glob.glob("/sys/class/net/wl*")
+            if wifi_ifaces:
+                wifi_iface = os.path.basename(wifi_ifaces[0])
     except: pass
 
     def _wifi_ble_scan_worker():
@@ -1738,13 +1813,20 @@ def main_curses(stdscr, devices):
 
     # Kill any stale hackrf processes from previous runs
     if has_hackrf:
-        subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
-                       capture_output=True, timeout=5)
+        if IS_MACOS:
+            subprocess.run(["killall", "hackrf_sweep", "hackrf_transfer"],
+                           capture_output=True, timeout=5)
+        else:
+            subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
+                           capture_output=True, timeout=5)
         time.sleep(1)
 
     # Reset HackRF once at startup
     if has_hackrf:
-        subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+        if IS_LINUX:
+            try:
+                subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+            except: pass
         time.sleep(3)
 
     # Enable non-blocking getch for hotkeys
@@ -2156,7 +2238,7 @@ def main_curses(stdscr, devices):
 import logging
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = "/home/ihorman/sdr_captures/rflord_logs"
+LOG_DIR = "/Users/ihorman/sdr_captures/rflord_logs"
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def setup_logger():
@@ -2267,10 +2349,17 @@ def main_ansi(device=None):
     print("\033[2J\033[H\033[?25l", end="")
     # Kill stale hackrf processes + reset HackRF
     if device == "hackrf":
-        subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
-                       capture_output=True, timeout=5)
+        if IS_MACOS:
+            subprocess.run(["killall", "hackrf_sweep", "hackrf_transfer"],
+                           capture_output=True, timeout=5)
+        else:
+            subprocess.run(["sudo", "killall", "hackrf_sweep", "hackrf_transfer"],
+                           capture_output=True, timeout=5)
         time.sleep(1)
-        subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+        if IS_LINUX:
+            try:
+                subprocess.run(["sudo", "usbreset", "1d50:6089"], capture_output=True, timeout=5)
+            except: pass
         time.sleep(3)
 
     

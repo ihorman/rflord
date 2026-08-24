@@ -448,60 +448,84 @@ class RuleEngine:
     def scan_wifi(interface="wlan0", timeout=5):
         """Scan WiFi networks and return list of SignalEvent.
 
-        Uses 'iw dev <iface> scan' to discover WiFi devices.
+        Cross-platform: uses 'iw' on Linux, 'airport' on macOS.
         """
         import subprocess
+        import sys
+        import re
         events = []
-        try:
-            r = subprocess.run(
-                ["sudo", "iw", "dev", interface, "scan"],
-                capture_output=True, text=True, timeout=timeout
-            )
-            if r.returncode != 0:
-                log.warning(f"WiFi scan failed: {r.stderr[:200]}")
-                return events
 
-            current_bss = None
-            current_ssid = None
-            current_rssi = None
-
-            for line in r.stdout.split('\n'):
-                line = line.strip()
-                if line.startswith('BSS '):
-                    # Save previous
-                    if current_bss:
+        if sys.platform == "darwin":
+            # macOS: use airport utility
+            try:
+                airport_path = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
+                r = subprocess.run(
+                    [airport_path, "-s"],
+                    capture_output=True, text=True, timeout=timeout
+                )
+                for line in r.stdout.strip().split('\n')[1:]:  # Skip header
+                    line = line.strip()
+                    if not line:
+                        continue
+                    # Format: SSID BSSID RSSI CHANNEL HT CC SECURITY
+                    m = re.match(r'(.+?)\s+([0-9a-fA-F:]{17})\s+(-?\d+)', line)
+                    if m:
                         events.append(SignalEvent(
                             source='wifi',
-                            mac=current_bss,
-                            ssid=current_ssid,
-                            rssi=current_rssi,
+                            mac=m.group(2),
+                            ssid=m.group(1).strip(),
+                            rssi=int(m.group(3)),
                         ))
-                    # Parse MAC from "BSS aa:bb:cc:dd:ee:ff(on wlan0)"
-                    parts = line.split()
-                    current_bss = parts[1].split('(')[0] if len(parts) > 1 else None
-                    current_ssid = None
-                    current_rssi = None
-                elif line.startswith('SSID:'):
-                    current_ssid = line[5:].strip()
-                elif line.startswith('signal:'):
-                    try:
-                        current_rssi = int(float(line[7:].strip().replace(' dBm', '')))
-                    except:
-                        pass
+            except Exception as e:
+                log.debug(f"macOS WiFi scan skip: {e}")
+        else:
+            # Linux: use iw
+            try:
+                r = subprocess.run(
+                    ["sudo", "iw", "dev", interface, "scan"],
+                    capture_output=True, text=True, timeout=timeout
+                )
+                if r.returncode != 0:
+                    log.warning(f"WiFi scan failed: {r.stderr[:200]}")
+                    return events
 
-            # Save last
-            if current_bss:
-                events.append(SignalEvent(
-                    source='wifi',
-                    mac=current_bss,
-                    ssid=current_ssid,
-                    rssi=current_rssi,
-                ))
+                current_bss = None
+                current_ssid = None
+                current_rssi = None
 
-        except subprocess.TimeoutExpired:
-            log.warning(f"WiFi scan timeout after {timeout}s")
-        except Exception as e:
-            log.warning(f"WiFi scan error: {e}")
+                for line in r.stdout.split('\n'):
+                    line = line.strip()
+                    if line.startswith('BSS '):
+                        if current_bss:
+                            events.append(SignalEvent(
+                                source='wifi',
+                                mac=current_bss,
+                                ssid=current_ssid,
+                                rssi=current_rssi,
+                            ))
+                        parts = line.split()
+                        current_bss = parts[1].split('(')[0] if len(parts) > 1 else None
+                        current_ssid = None
+                        current_rssi = None
+                    elif line.startswith('SSID:'):
+                        current_ssid = line[5:].strip()
+                    elif line.startswith('signal:'):
+                        try:
+                            current_rssi = int(float(line[7:].strip().replace(' dBm', '')))
+                        except:
+                            pass
+
+                if current_bss:
+                    events.append(SignalEvent(
+                        source='wifi',
+                        mac=current_bss,
+                        ssid=current_ssid,
+                        rssi=current_rssi,
+                    ))
+            except subprocess.TimeoutExpired:
+                log.warning(f"WiFi scan timeout after {timeout}s")
+            except Exception as e:
+                log.warning(f"WiFi scan error: {e}")
 
         return events
 
@@ -511,39 +535,82 @@ class RuleEngine:
     def scan_ble(timeout=5):
         """Scan BLE devices and return list of SignalEvent.
 
-        Uses 'hcitool lescan' to discover BLE devices.
+        Cross-platform: uses 'hcitool' on Linux, 'system_profiler' on macOS.
         """
         import subprocess
+        import sys
+        import re
         events = []
-        try:
-            # Start LE scan
-            proc = subprocess.Popen(
-                ["hcitool", "lescan"],
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            time.sleep(timeout)
-            proc.terminate()
-            stdout, _ = proc.communicate(timeout=2)
 
-            for line in stdout.decode('utf-8', errors='replace').split('\n'):
-                line = line.strip()
-                if not line or line.startswith('LE Scan'):
-                    continue
-                # Format: "AA:BB:CC:DD:EE:FF Device Name"
-                parts = line.split(None, 1)
-                if len(parts) >= 2:
-                    mac = parts[0]
-                    name = parts[1]
+        if sys.platform == "darwin":
+            # macOS: use system_profiler SPBluetoothDataType
+            try:
+                r = subprocess.run(
+                    ["system_profiler", "SPBluetoothDataType"],
+                    capture_output=True, text=True, timeout=timeout + 5
+                )
+                current_addr = None
+                current_name = None
+                for line in r.stdout.split('\n'):
+                    stripped = line.strip()
+                    addr_m = re.match(r'Address:\s+([0-9A-Fa-f:]{17})', stripped)
+                    if addr_m:
+                        # Save previous
+                        if current_addr and current_name:
+                            events.append(SignalEvent(
+                                source='ble',
+                                mac=current_addr,
+                                ble_name=current_name,
+                            ))
+                        current_addr = addr_m.group(1).upper()
+                        current_name = None
+                    # Device name lines (indented, with colon, not metadata)
+                    elif current_addr and ':' in stripped:
+                        skip = ('Address', 'State', 'Chipset', 'Discoverable',
+                                'Firmware', 'Product', 'Vendor', 'Supported',
+                                'Transport', 'Bluetooth', 'Not Conn', 'Connected',
+                                'RSSI', 'Serial', 'Case', 'Minor', 'Major')
+                        if not stripped.startswith(skip):
+                            name = stripped.split(':')[0].strip()
+                            if name and len(name) > 2 and not current_name:
+                                current_name = name
+                # Save last
+                if current_addr and current_name:
                     events.append(SignalEvent(
                         source='ble',
-                        mac=mac,
-                        ble_name=name,
+                        mac=current_addr,
+                        ble_name=current_name,
                     ))
+            except Exception as e:
+                log.debug(f"macOS BLE scan skip: {e}")
+        else:
+            # Linux: use hcitool lescan
+            try:
+                proc = subprocess.Popen(
+                    ["hcitool", "lescan"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                time.sleep(timeout)
+                proc.terminate()
+                stdout, _ = proc.communicate(timeout=2)
 
-        except subprocess.TimeoutExpired:
-            pass
-        except Exception as e:
-            log.warning(f"BLE scan error: {e}")
+                for line in stdout.decode('utf-8', errors='replace').split('\n'):
+                    line = line.strip()
+                    if not line or line.startswith('LE Scan'):
+                        continue
+                    parts = line.split(None, 1)
+                    if len(parts) >= 2:
+                        mac = parts[0]
+                        name = parts[1]
+                        events.append(SignalEvent(
+                            source='ble',
+                            mac=mac,
+                            ble_name=name,
+                        ))
+            except subprocess.TimeoutExpired:
+                pass
+            except Exception as e:
+                log.warning(f"BLE scan error: {e}")
 
         return events
 
