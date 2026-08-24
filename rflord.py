@@ -2432,6 +2432,9 @@ def main():
     device = devices[0]  # Primary device for backward compat
     print(f"SDR devices: {', '.join(devices)}", flush=True)
 
+    # Set ESCDELAY for faster escape sequence handling (default is 1000ms!)
+    os.environ.setdefault('ESCDELAY', '25')
+
     # Try curses first (proper terminal), fallback to ANSI
     try:
         if sys.stdout.isatty():
