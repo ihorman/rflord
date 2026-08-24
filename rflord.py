@@ -613,12 +613,11 @@ def speak(text):
         try:
             raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
             out = tempfile.mktemp(suffix='.wav', prefix='hal_')
-            r1 = subprocess.run(["edge-tts", "--voice", TTS_VOICE, "--rate=-15%",
-                            "--text", text, "--write-media", raw],
-                           capture_output=True, timeout=60)
-            if r1.returncode != 0:
-                log.warning(f"TTS edge-tts failed: rc={r1.returncode} stderr={r1.stderr[:200]}")
-                return
+            # Use edge-tts as module (more reliable than CLI)
+            import edge_tts
+            import asyncio
+            communicate = edge_tts.Communicate(text, TTS_VOICE, rate="-15%")
+            asyncio.run(communicate.save(raw))
             if os.path.exists(raw):
                 r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
                 os.unlink(raw)
@@ -626,10 +625,14 @@ def speak(text):
                     log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
                     return
                 if os.path.exists(out):
-                    r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                    # Cross-platform audio playback
+                    if IS_MACOS:
+                        r3 = subprocess.run(["afplay", out], capture_output=True, timeout=120)
+                    else:
+                        r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
                     os.unlink(out)
                     if r3.returncode != 0:
-                        log.warning(f"TTS paplay failed: rc={r3.returncode} stderr={r3.stderr[:200]}")
+                        log.warning(f"TTS playback failed: rc={r3.returncode}")
             else:
                 log.warning(f"TTS raw file not created: {raw}")
         except Exception as e:
@@ -1365,10 +1368,14 @@ def play_voice_sample(freq_mhz):
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
         log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}, playing audio...")
         save_decoded_audio(freq_mhz, wav, sig_type)
-        ensure_sink()
-        r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        # Cross-platform audio playback
+        if IS_MACOS:
+            r2 = subprocess.run(["afplay", wav], capture_output=True, timeout=10)
+        else:
+            ensure_sink()
+            r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
         if r2.returncode != 0:
-            log.warning(f"VOICE PLAY FAIL: paplay rc={r2.returncode} stderr={r2.stderr[:200]}")
+            log.warning(f"VOICE PLAY FAIL: rc={r2.returncode}")
         else:
             log.info(f"VOICE PLAY OK: {freq_mhz:.1f} MHz")
         os.unlink(wav)
@@ -1429,12 +1436,15 @@ def try_fpv_decode(freq_mhz):
 
 def try_voice_decode(freq_mhz):
     try:
-        scripts = "/Users/ihorman/.hermes/profiles/shared/skills/devops/scan-radio/scripts"
-        cmd = f"python3 {scripts}/voice_decode.py scan {freq_mhz} --duration 3 2>&1"
+        voice_script = os.path.join(os.path.dirname(__file__), "voice_decode.py")
+        if not os.path.exists(voice_script):
+            log.debug(f"VOICE DECODE: voice_decode.py not found at {voice_script}")
+            return None
+        cmd = f"python3 {voice_script} scan {freq_mhz} --duration 3 2>&1"
         log.info(f"VOICE DECODE: running {cmd}")
         r = run_cmd(cmd, timeout=15)
         log.info(f"VOICE DECODE: result={r[:200] if r else '(empty)'}")
-        # Play voice audio whenever a voice signal is detected, not just in hardcoded bands
+        # Play voice audio whenever a voice signal is detected
         has_voice = False
         if r:
             voice_indicators = ["DMR", "D-STAR", "NFM", "AM", "POCSAG", "DTMF", "Morse",
