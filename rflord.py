@@ -542,15 +542,27 @@ def identify_signal_type(freq_mhz, power_dbfs, std):
     if 2620 <= freq_mhz <= 2690:
         return "LTE2600"
     
-    # WiFi
+    # WiFi 2.4 GHz
     wifi_ch = {1:2412, 2:2417, 3:2422, 4:2427, 5:2432, 6:2437, 7:2442, 8:2447, 9:2452, 10:2457, 11:2462, 12:2467, 13:2472}
     for ch, center in wifi_ch.items():
         if abs(freq_mhz - center) < 3:
             return f"WiFi Ch{ch}"
     if 2400 <= freq_mhz <= 2500:
         return "WiFi 2.4GHz"
-    if 5150 <= freq_mhz <= 5875:
+    
+    # WiFi 5 GHz (non-overlapping with FPV)
+    if 5150 <= freq_mhz <= 5725:
         return "WiFi 5GHz"
+    
+    # FPV band (5725-5875 MHz) — shared with WiFi UNII-3
+    # FPV is narrowband analog video, WiFi is wideband OFDM
+    if 5725 <= freq_mhz <= 5875:
+        if std < 2 and power_dbfs > -30:
+            return "FPV Video"
+        elif std < 3:
+            return "FPV/WiFi"
+        else:
+            return "WiFi 5GHz"
     
     # Broadcast
     if 88 <= freq_mhz <= 108:
@@ -587,8 +599,6 @@ def identify_signal_type(freq_mhz, power_dbfs, std):
         return "Possible Camera"
     if 1080 <= freq_mhz <= 1300 and std < 2 and power_dbfs > -30:
         return "Possible Camera"
-    if 5725 <= freq_mhz <= 5875 and std < 2 and power_dbfs > -30:
-        return "Possible FPV"
     
     return "Unknown"
 
@@ -1320,9 +1330,14 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     elif 2410 <= freq_mhz <= 2483 and std < 2 and bw and bw < 100000:
         return "CAM?"
     elif 5725 <= freq_mhz <= 5875 and std < 2:
-        return "FPV?"
-    elif 5150 <= freq_mhz <= 5900:
-        return "WiFi/FPV"
+        return "FPV"
+    elif 5150 <= freq_mhz <= 5725:
+        return "WiFi 5GHz"
+    elif 5725 <= freq_mhz <= 5875:
+        if std < 3:
+            return "FPV/WiFi"
+        else:
+            return "WiFi 5GHz"
     elif 2400 <= freq_mhz <= 2500:
         return "WiFi/BT"
     elif 1200 <= freq_mhz <= 1400 and std < 2:
@@ -1599,15 +1614,17 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.refresh()
 
 def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None, assessment=None):
-    """Draw split-screen table: suspicious left, known right. NO SCROLL."""
+    """Draw split-screen table: suspicious left, known right. Fully dynamic layout."""
     global _cursor_pos, _cursor_active, _cursor_panel
     if known_freqs is None:
         known_freqs = {}
-    stdscr.erase()
-    h, w = stdscr.getmaxyx()
     
-    # Use full terminal width
-    effective_w = w
+    # Get CURRENT terminal size (resizes dynamically)
+    h, w = stdscr.getmaxyx()
+    stdscr.erase()
+    
+    # Full width, no caps
+    W = w
     
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
@@ -1617,7 +1634,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                 key=lambda x: x['peak'], reverse=True)
     ok_grouped = group_signals_by_type(ok, artemis_db)
     
-    # Clamp cursor to valid range for active panel
+    # Clamp cursor
     if _cursor_active:
         active_list = sus_grouped if _cursor_panel == 'sus' else ok_grouped
         if len(active_list) > 0:
@@ -1627,160 +1644,135 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     else:
         _cursor_pos = 0
 
-
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
-    # Split: left panel60% for suspicious, right40% for known
-    mid = int(effective_w * 0.6)
-    # Ensure minimum panel widths
-    mid = max(50, min(mid, effective_w - 40))
+    # Panel split: 60% left, 40% right
+    L = max(50, int(W * 0.6))  # Left panel width
+    R = W - L                   # Right panel width
     row = 0
     
-    # Header — full width
+    # === HEADER (full width) ===
     header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
     try:
-        stdscr.addstr(row, 0, (header[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+        stdscr.addstr(row, 0, header[:W].ljust(W), curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
     row += 1
 
-    # Web dashboard URL line
     if web_url:
-        url_line = f" Web Dashboard: {web_url}"
         try:
-            stdscr.addstr(row, 0, (url_line[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+            stdscr.addstr(row, 0, f" Web Dashboard: {web_url}"[:W].ljust(W), curses.color_pair(CP_OK) | curses.A_BOLD)
         except: pass
         row += 1
 
-    # Threat assessment line (from rule engine)
     if assessment and assessment.has_threats:
-        threat_icons = {0: "🔴", 1: "🟠", 2: "🟡", 3: "🟢"}
-        icon = threat_icons.get(assessment.max_threat_level, "🟢")
-        threat_line = f" {icon} {assessment.summary}"
+        icon = {0: "🔴", 1: "🟠", 2: "🟡", 3: "🟢"}.get(assessment.max_threat_level, "🟢")
         try:
             color = CP_DANGER if assessment.max_threat_level <= 1 else CP_SUS_YEL
-            stdscr.addstr(row, 0, (threat_line[:effective_w-1]).ljust(effective_w-1), curses.color_pair(color) | curses.A_BOLD)
+            stdscr.addstr(row, 0, f" {icon} {assessment.summary}"[:W].ljust(W), curses.color_pair(color) | curses.A_BOLD)
         except: pass
         row += 1
 
-    # Column titles — full width
+    # === COLUMN TITLES (full width) ===
     try:
-        stdscr.addstr(row, 0, f" {'SUSPICIOUS':^{mid-2}}"[:mid-1].ljust(mid-1), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
-        stdscr.addstr(row, mid, f" {'KNOWN SIGNALS':^{effective_w-mid-2}}"[:effective_w-mid-1].ljust(effective_w-mid-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+        stdscr.addstr(row, 0, f" {'SUSPICIOUS':^{L-2}}"[:L].ljust(L), curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
+        stdscr.addstr(row, L, f" {'KNOWN SIGNALS':^{R-2}}"[:R].ljust(R), curses.color_pair(CP_OK) | curses.A_BOLD)
     except: pass
     row += 1
     
-    # Sub-headers — full width
+    # === SUB-HEADERS (full width, dynamic columns) ===
     try:
-        left_hdr = f"!  {'Freq':>7} {'Pwr':>6} {'Std':>5} {'Dist':>6} {'Type':<16} Description"
-        stdscr.addstr(row, 0, left_hdr[:mid-1].ljust(mid-1), curses.color_pair(CP_DIM))
-        right_hdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>6} {'Bnd':>5} {'Type':<20}"
-        stdscr.addstr(row, mid, right_hdr[:effective_w-mid-1].ljust(effective_w-mid-1), curses.color_pair(CP_DIM))
+        left_hdr = f" !  {'Freq':>7}  {'Pwr':>6}  {'Std':>5}  {'Dist':>6}  {'Type':<18} Description"
+        stdscr.addstr(row, 0, left_hdr[:L].ljust(L), curses.color_pair(CP_DIM))
+        right_hdr = f" {'Cnt':>4}  {'Pwr':>6}  {'Dist':>6}  {'Bnd':>5}  Type"
+        stdscr.addstr(row, L, right_hdr[:R].ljust(R), curses.color_pair(CP_DIM))
     except: pass
     row += 1
     
-    # Separator — full width
+    # === SEPARATOR (full width) ===
     try:
-        stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1].ljust(mid-1), curses.color_pair(CP_SEP))
-        stdscr.addstr(row, mid, (" " + "─" * (effective_w-mid-2))[:effective_w-mid-1].ljust(effective_w-mid-1), curses.color_pair(CP_SEP))
+        stdscr.addstr(row, 0, ("─" * L)[:L], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, L, ("─" * R)[:R], curses.color_pair(CP_SEP))
     except: pass
     row += 1
     
-    # Available rows for data
-    avail = h - row - 2  # 2 for footer
+    # === DATA ROWS ===
+    avail = h - row - 2
     
     for i in range(avail):
         if row >= h - 2: break
         
-        # Left — suspicious (grouped)
+        # Left panel — suspicious
         if i < len(sus_grouped):
             g = sus_grouped[i]
             cls = g['classify']
-            if cls == "danger":
-                cp = CP_DANGER
-            else:
-                cp = CP_SUS_RED
-            # Calculate description width based on available space
-            fixed_w = 48  # Fixed columns width
-            desc_w = max(10, mid - fixed_w - 2)
+            cp = CP_DANGER if cls == "danger" else CP_SUS_RED
+            sev = '!!!' if cls == 'danger' else ('!!' if cls == 'sus' else '! ')
+            
+            # Description fills remaining space
+            fixed = 50  # chars for fixed columns
+            desc_w = max(5, L - fixed)
             desc = g.get('remark', '')[:desc_w]
-            sev = '!!!' if cls == 'danger' else ('!! ' if cls == 'sus' else '!  ')
-            # Trend arrow
-            trend = ''
-            if history:
-                try:
-                    trend_vals = history.get_trend(g['freq'], n=5)
-                    if len(trend_vals) >= 2:
-                        v0 = trend_vals[0]
-                        v1 = trend_vals[-1]
-                        p0 = v0.get('peak_dbfs', 0) if isinstance(v0, dict) else float(v0)
-                        p1 = v1.get('peak_dbfs', 0) if isinstance(v1, dict) else float(v1)
-                        p0 = float(p0) if not isinstance(p0, dict) else 0
-                        p1 = float(p1) if not isinstance(p1, dict) else 0
-                        if p1 > p0 + 3: trend = ' '
-                        elif p1 < p0 - 3: trend = ' '
-                except Exception as ex:
-                    log.debug(f"Trend arrow error: {ex}")
-            # Cursor indicator — left panel (suspicious)
-            cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'sus' and i == _cursor_pos) else ' '
-            line = f"{cursor_mark}{sev} {g['freq']:>7.1f} {g['peak']:>+6.1f} {g['std']:>5.1f} {g['dist']:>6} {g['type']:<16} {desc}{trend}"
+            
+            cursor = '▸' if (_cursor_active and _cursor_panel == 'sus' and i == _cursor_pos) else ' '
+            line = f"{cursor}{sev} {g['freq']:>7.1f}  {g['peak']:>+6.1f}  {g['std']:>5.1f}  {g['dist']:>6}  {g['type']:<18} {desc}"
+            
             try:
                 attr = curses.color_pair(cp) | curses.A_BOLD
                 if _cursor_active and _cursor_panel == 'sus' and i == _cursor_pos:
                     attr |= curses.A_REVERSE
-                stdscr.addstr(row, 0, line[:mid-1].ljust(mid-1), attr)
+                stdscr.addstr(row, 0, line[:L].ljust(L), attr)
             except: pass
         
-        # Right — known (grouped by type)
+        # Right panel — known
         if i < len(ok_grouped):
             g = ok_grouped[i]
             cnt = f"x{g['count']}" if g['count'] > 1 else ""
-            # Cursor indicator — right panel (known)
-            cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'ok' and i == _cursor_pos) else ' '
-            # Calculate type width based on available space
-            fixed_w = 22  # Fixed columns width
-            type_w = max(10, (effective_w - mid) - fixed_w - 2)
+            
+            # Type fills remaining space
+            fixed = 24
+            type_w = max(5, R - fixed)
             type_str = g['type'][:type_w]
-            line = f"{cursor_mark}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>6} {g['band']:>5} {type_str}"
+            
+            cursor = '▸' if (_cursor_active and _cursor_panel == 'ok' and i == _cursor_pos) else ' '
+            line = f"{cursor}{cnt:>4}  {g['peak']:>+6.1f}  {g['dist']:>6}  {g['band']:>5}  {type_str}"
+            
             try:
                 attr = curses.color_pair(CP_OK)
                 if _cursor_active and _cursor_panel == 'ok' and i == _cursor_pos:
                     attr |= curses.A_REVERSE
-                stdscr.addstr(row, mid, line[:effective_w-mid-1].ljust(effective_w-mid-1), attr)
+                stdscr.addstr(row, L, line[:R].ljust(R), attr)
             except: pass
         
         row += 1
     
-    # Footer — full width
+    # === FOOTER SEPARATOR (full width) ===
     try:
-        stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1].ljust(mid-1), curses.color_pair(CP_SEP))
-        stdscr.addstr(row, mid, (" " + "─" * (effective_w-mid-2))[:effective_w-mid-1].ljust(effective_w-mid-1), curses.color_pair(CP_SEP))
+        stdscr.addstr(row, 0, ("─" * L)[:L], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, L, ("─" * R)[:R], curses.color_pair(CP_SEP))
     except: pass
     row += 1
     
+    # === HOTKEY BAR (full width) ===
     extra = ""
-    if len(sus_grouped) > avail: extra += f" | {len(sus_grouped)-avail} more suspicious"
-    if len(ok_grouped) > avail: extra += f" | {len(ok_grouped)-avail} more signals"
+    if len(sus_grouped) > avail: extra += f" | +{len(sus_grouped)-avail} sus"
+    if len(ok_grouped) > avail: extra += f" | +{len(ok_grouped)-avail} ok"
+    
+    voice_str = "ON" if voice_enabled else "OFF"
+    sup_str = "ON" if _suppress_active else "OFF"
+    cur_str = ""
+    if _cursor_active:
+        if _cursor_panel == 'sus' and sus_grouped:
+            cur_str = f" [SUS {_cursor_pos+1}/{len(sus_grouped)}]"
+        elif _cursor_panel == 'ok' and ok_grouped:
+            cur_str = f" [OK {_cursor_pos+1}/{len(ok_grouped)}]"
+    
+    keys = f" q:Quit r:Rescan c:Capture v:Voice({voice_str}) m:Mute s:Suppress({sup_str}) +/-:Interval({INTERVAL}s) ←→:Panel ↑↓:Nav d:Detail e:Export l:Log h:History{cur_str}{extra}"
     try:
-        voice_str = "ON" if voice_enabled else "OFF"
-        sup_str = "ON" if _suppress_active else "OFF"
-        # Show cursor position for active panel
-        if _cursor_active:
-            if _cursor_panel == 'sus' and len(sus_grouped) > 0:
-                cur_str = f" [SUS {_cursor_pos+1}/{len(sus_grouped)}]"
-            elif _cursor_panel == 'ok' and len(ok_grouped) > 0:
-                cur_str = f" [OK {_cursor_pos+1}/{len(ok_grouped)}]"
-            else:
-                cur_str = ""
-        else:
-            cur_str = ""
-        keys = f" q:Quit  r:Rescan  c:Capture  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ←→:Panel  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
-        stdscr.addstr(row, 0, (keys[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, keys[:W].ljust(W), curses.color_pair(CP_DIM))
     except: pass
     
-    # Clear any remaining rows below (leftover from previous draw)
     stdscr.clrtobot()
-    
     stdscr.refresh()
 
 def main_curses(stdscr, devices):
