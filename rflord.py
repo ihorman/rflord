@@ -362,6 +362,9 @@ def classify(f, power, std):
             return "ok"
     if 2402 <= f <= 2480 and std > 3:
         return "ok"
+    # WiFi band (2.4 GHz) — even if std is low, it's likely WiFi burst
+    if 2400 <= f <= 2500:
+        return "ok"
     if 935 <= f <= 960 or 1805 <= f <= 1880:
         return "ok"
     if 88 <= f <= 108 or 174 <= f <= 230:
@@ -371,6 +374,11 @@ def classify(f, power, std):
     if 1089 <= f <= 1091 or 1574 <= f <= 1576:
         return "ok"
     if 700 <= f <= 960 and std > 3:
+        return "ok"
+    # GSM/LTE bands — even narrowband bursts are cellular
+    if 925 <= f <= 960:
+        return "ok"
+    if 1805 <= f <= 1880:
         return "ok"
     if 1700 <= f <= 2000 or 2000 <= f <= 2200:
         return "ok"
@@ -400,13 +408,14 @@ def classify(f, power, std):
         return "sus"
     if 300 <= f <= 330:  # Military
         return "sus"
-    if 900 <= f <= 928 and std < 2:  # Possible hidden camera
+    # Narrowband in camera bands = suspicious ONLY if strong
+    if 900 <= f <= 928 and std < 2 and power > -30:  # Possible hidden camera
         return "sus"
-    if 1080 <= f <= 1300 and std < 2:  # Spy camera
+    if 1080 <= f <= 1300 and std < 2 and power > -30:  # Spy camera
         return "sus"
-    if 1200 <= f <= 1400 and std < 2:  # Spy camera
+    if 1200 <= f <= 1400 and std < 2 and power > -30:  # Spy camera
         return "sus"
-    if 5725 <= f <= 5875 and std < 2:  # FPV video
+    if 5725 <= f <= 5875 and std < 2 and power > -30:  # FPV video
         return "sus"
     if 2410 <= f <= 2483 and std < 2 and power > -25:  # Possible camera
         return "sus"
