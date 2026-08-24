@@ -375,6 +375,7 @@ def group_suspicious(signals, artemis_db=None):
             except: pass
         
         # If still no remark, try signatures DB
+        # Skip surveillance entries for known legitimate signals
         if not remark:
             try:
                 from signatures_db import SignaturesDB
@@ -382,16 +383,12 @@ def group_suspicious(signals, artemis_db=None):
                 sigs_db = db.identify_freq(f_strong, tolerance_mhz=1.0)
                 db.close()
                 if sigs_db:
-                    # Use the first non-generic match
                     for s in sigs_db:
                         name = s.get('name', '')
                         cat = s.get('category', '')
-                        # Skip generic entries
-                        if name and name not in ('Unknown', 'signal'):
-                            if cat and cat not in ('surveillance', 'signal'):
-                                remark = f"{name} [{cat}]"
-                            else:
-                                remark = name
+                        # Skip generic and surveillance entries
+                        if name and name not in ('Unknown', 'signal') and cat not in ('surveillance', 'signal'):
+                            remark = f"{name} [{cat}]"
                             break
             except: pass
         
@@ -412,57 +409,51 @@ def group_suspicious(signals, artemis_db=None):
 def classify(f, power, std):
     """Classify signal as ok/sus/danger.
     
-    Uses frequency + power + distance heuristic:
-    - Close range (<200m) any signal = SUSPICIOUS
-    - Very close (<50m) = DANGER
-    - Far (>200m) legitimate bands = ok
+    Known legitimate signals are ALWAYS ok, regardless of distance.
+    Only unknown signals at close range are suspicious.
     """
     
-    # Calculate distance
+    # === KNOWN LEGITIMATE SIGNALS — always ok ===
+    if 2400 <= f <= 2500: return "ok"  # WiFi/BT
+    if 5150 <= f <= 5875: return "ok"  # WiFi 5GHz
+    if 925 <= f <= 960: return "ok"    # GSM
+    if 1805 <= f <= 1880: return "ok"  # GSM1800
+    if 1700 <= f <= 2000: return "ok"  # 3G/LTE
+    if 2000 <= f <= 2200: return "ok"  # 3G/LTE
+    if 2300 <= f <= 2700: return "ok"  # LTE
+    if 791 <= f <= 862: return "ok"    # LTE800
+    if 2620 <= f <= 2690: return "ok"  # LTE2600
+    if 88 <= f <= 108: return "ok"     # FM radio
+    if 174 <= f <= 230: return "ok"    # DAB/DVB-T
+    if 470 <= f <= 790: return "ok"    # DVB-T
+    if 108 <= f <= 137: return "ok"   # Air band
+    if 1089 <= f <= 1091: return "ok"  # ADS-B
+    if 1574 <= f <= 1576: return "ok"  # GPS
+    if 144 <= f <= 148: return "ok"    # 2m ham
+    if 430 <= f <= 470: return "ok"    # 70cm/PMR
+    if 446 <= f <= 447: return "ok"    # PMR446
+    if 462 <= f <= 468: return "ok"    # FRS/GMRS
+    if 433 <= f <= 435: return "ok"    # ISM433
+    if 868 <= f <= 870: return "ok"    # ISM868
+    if 915 <= f <= 928: return "ok"    # ISM915
+    if 400 <= f <= 470: return "ok"    # UHF TV
+    if 510 <= f <= 610: return "ok"    # UHF TV
+    
+    # Military — ok only if far away, suspicious if close
+    if 225 <= f <= 400:
+        dist_m = est_distance_m(f, power)
+        if dist_m < 100: return "sus"
+        return "ok"
+    
+    # === UNKNOWN SIGNAL — use distance heuristic ===
     dist_m = est_distance_m(f, power)
     
-    # === CLOSE RANGE = SUSPICIOUS regardless of frequency ===
     if dist_m < 50:
         return "danger"
     if dist_m < 200:
-        # Close range — check if it's a known legitimate local signal
-        # WiFi, Bluetooth, personal devices are OK at close range
-        if 2400 <= f <= 2500: return "ok"  # WiFi/BT
-        if 5150 <= f <= 5875: return "ok"  # WiFi 5GHz
-        if 88 <= f <= 108: return "ok"  # FM radio
-        # Everything else at close range is suspicious
         return "sus"
     
-    # === FAR RANGE (>200m) — use frequency-based classification ===
-    
-    # Known legitimate signals
-    if 2400 <= f <= 2500: return "ok"
-    if 5150 <= f <= 5875: return "ok"
-    if 925 <= f <= 960: return "ok"
-    if 1805 <= f <= 1880: return "ok"
-    if 1700 <= f <= 2000: return "ok"
-    if 2000 <= f <= 2200: return "ok"
-    if 2300 <= f <= 2700: return "ok"
-    if 791 <= f <= 862: return "ok"
-    if 2620 <= f <= 2690: return "ok"
-    if 88 <= f <= 108: return "ok"
-    if 174 <= f <= 230: return "ok"
-    if 470 <= f <= 790: return "ok"
-    if 108 <= f <= 137: return "ok"
-    if 1089 <= f <= 1091: return "ok"
-    if 1574 <= f <= 1576: return "ok"
-    if 144 <= f <= 148: return "ok"
-    if 430 <= f <= 470: return "ok"
-    if 446 <= f <= 447: return "ok"
-    if 462 <= f <= 468: return "ok"
-    if 433 <= f <= 435: return "ok"
-    if 868 <= f <= 870: return "ok"
-    if 915 <= f <= 928: return "ok"
-    if 400 <= f <= 470: return "ok"
-    if 510 <= f <= 610: return "ok"
-    if 225 <= f <= 400: return "ok"
-    
-    # Surveillance bands — suspicious even far away
+    # Far range — surveillance bands suspicious
     if 900 <= f <= 928 and std < 3: return "sus"
     if 1080 <= f <= 1300 and std < 3: return "sus"
     if 5725 <= f <= 5875 and std < 3: return "sus"
