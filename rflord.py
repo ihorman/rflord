@@ -355,73 +355,108 @@ def group_suspicious(signals, artemis_db=None):
     return result
 
 def classify(f, power, std):
-    # Known normal signals
-    wifi_ch = [2412, 2417, 2422, 2427, 2432, 2437, 2442, 2447, 2452, 2457, 2462, 2467, 2472]
-    for ch in wifi_ch:
-        if abs(f - ch) < 3:
-            return "ok"
-    if 2402 <= f <= 2480 and std > 3:
-        return "ok"
-    # WiFi band (2.4 GHz) — even if std is low, it's likely WiFi burst
+    """Classify signal as ok/sus/danger.
+    
+    Conservative approach: only flag as suspicious if signal is:
+    1. In a known surveillance frequency band AND
+    2. Narrowband (std < 2) AND
+    3. Strong (power > -30 dBFS) AND
+    4. NOT in a known legitimate band
+    """
+    
+    # === KNOWN LEGITIMATE SIGNALS ===
+    
+    # WiFi 2.4 GHz
     if 2400 <= f <= 2500:
         return "ok"
-    if 935 <= f <= 960 or 1805 <= f <= 1880:
+    
+    # WiFi 5 GHz
+    if 5150 <= f <= 5875:
         return "ok"
-    if 88 <= f <= 108 or 174 <= f <= 230:
-        return "ok"
-    if 108 <= f <= 137 or 144 <= f <= 148 or 150 <= f <= 174:
-        return "ok"
-    if 1089 <= f <= 1091 or 1574 <= f <= 1576:
-        return "ok"
-    if 700 <= f <= 960 and std > 3:
-        return "ok"
-    # GSM/LTE bands — even narrowband bursts are cellular
+    
+    # GSM/LTE cellular
     if 925 <= f <= 960:
         return "ok"
     if 1805 <= f <= 1880:
         return "ok"
-    if 1700 <= f <= 2000 or 2000 <= f <= 2200:
+    if 1700 <= f <= 2000:
+        return "ok"
+    if 2000 <= f <= 2200:
         return "ok"
     if 2300 <= f <= 2700:
         return "ok"
-    
-    # DVB-T2 band (470-790 MHz): narrowband = DANGER (possible camera)
-    if 470 <= f <= 790 and std < 2:
-        return "danger"
-    # Wideband DVB-T2 is ok
-    if 470 <= f <= 790 and std > 3:
+    if 791 <= f <= 862:
+        return "ok"
+    if 2620 <= f <= 2690:
         return "ok"
     
-    if 400 <= f <= 510:
+    # FM Radio
+    if 88 <= f <= 108:
+        return "ok"
+    
+    # DAB/DVB-T
+    if 174 <= f <= 230:
+        return "ok"
+    if 470 <= f <= 790:
+        return "ok"
+    
+    # Aviation
+    if 108 <= f <= 137:
+        return "ok"
+    if 1089 <= f <= 1091:
+        return "ok"
+    if 1574 <= f <= 1576:
+        return "ok"
+    
+    # Amateur radio
+    if 144 <= f <= 148:
+        return "ok"
+    if 430 <= f <= 470:
+        return "ok"
+    
+    # PMR/FRS/GMRS
+    if 446 <= f <= 447:
+        return "ok"
+    if 462 <= f <= 468:
+        return "ok"
+    
+    # ISM bands
+    if 433 <= f <= 435:
+        return "ok"
+    if 868 <= f <= 870:
+        return "ok"
+    if 915 <= f <= 928:
+        return "ok"
+    
+    # UHF TV
+    if 400 <= f <= 470:
         return "ok"
     if 510 <= f <= 610:
         return "ok"
     
-    # SUSPICIOUS — military, spy, FPV, unknown transmitters
-    if 255 <= f <= 267:  # Link-11 UHF, Gonets
-        return "sus"
-    if 270 <= f <= 285:  # Link-11 UHF
-        return "sus"
-    if 243 <= f <= 244:  # Milstar
-        return "sus"
-    if 140 <= f <= 150:  # Military CW
-        return "sus"
-    if 300 <= f <= 330:  # Military
-        return "sus"
-    # Narrowband in camera bands = suspicious ONLY if strong
-    if 900 <= f <= 928 and std < 2 and power > -30:  # Possible hidden camera
-        return "sus"
-    if 1080 <= f <= 1300 and std < 2 and power > -30:  # Spy camera
-        return "sus"
-    if 1200 <= f <= 1400 and std < 2 and power > -30:  # Spy camera
-        return "sus"
-    if 5725 <= f <= 5875 and std < 2 and power > -30:  # FPV video
-        return "sus"
-    if 2410 <= f <= 2483 and std < 2 and power > -25:  # Possible camera
+    # Military (known frequencies)
+    if 225 <= f <= 400:
+        return "ok"
+    
+    # === POTENTIALLY SUSPICIOUS ===
+    # Only flag if narrowband AND strong AND in known surveillance band
+    
+    # Spy camera900 MHz band
+    if 900 <= f <= 928 and std < 2 and power > -30:
         return "sus"
     
-    if power > -20:
+    # Spy camera1.2 GHz band
+    if 1080 <= f <= 1300 and std < 2 and power > -30:
         return "sus"
+    
+    # FPV video5.8 GHz
+    if 5725 <= f <= 5875 and std < 2 and power > -30:
+        return "sus"
+    
+    # Unknown strong signal
+    if power > -15:
+        return "sus"
+    
     return "ok"
 
 def est_distance(freq_mhz, power_dbfs):
