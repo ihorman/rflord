@@ -164,7 +164,18 @@ def detect_device():
     except Exception as e:
         log.debug(f"hackrf_info failed: {e}")
 
-    # Method 2: USB enumeration for PortaPack mode switch and RTL-SDR
+    # Method 2: Try hackrf_sweep directly (works even if hackrf_info fails)
+    if not devices:
+        try:
+            r = subprocess.run([HACKRF_SWEEP_BIN, "-f", "100:101", "-w", "100000", "-l", "32", "-g", "40", "-a", "1", "-N", "1"],
+                             capture_output=True, text=True, timeout=10)
+            if r.returncode == 0 and "Sweeping" in r.stderr:
+                print("HackRF detected via hackrf_sweep", flush=True)
+                devices.append("hackrf")
+        except Exception as e:
+            log.debug(f"hackrf_sweep test failed: {e}")
+
+    # Method 3: USB enumeration for PortaPack mode switch and RTL-SDR
     usb_output = _get_usb_devices()
 
     # PortaPack mode switch (PortaPack shows as 1d50:6018, need to switch to HackRF mode 1d50:6089)
@@ -207,6 +218,14 @@ def detect_device():
                 except: pass
         else:
             print("  PortaPack mode switch not supported on macOS (reconnect in HackRF mode)", flush=True)
+            # Try hackrf_sweep anyway - sometimes works
+            try:
+                r = subprocess.run([HACKRF_SWEEP_BIN, "-f", "100:101", "-w", "100000", "-l", "32", "-g", "40", "-a", "1", "-N", "1"],
+                                 capture_output=True, text=True, timeout=10)
+                if r.returncode == 0 and "Sweeping" in r.stderr:
+                    print("  hackrf_sweep works anyway!", flush=True)
+                    devices.append("hackrf")
+            except: pass
 
     # RTL-SDR detection
     if _has_rtlsdr_in_usb(usb_output):
@@ -2145,9 +2164,7 @@ def main_curses(stdscr, devices):
             history.record_scan(unique, device)
 
         # Web dashboard update — pass grouped data same as curses
-        log.info(f"WEB_CHECK: web_dash={web_dash}, type={type(web_dash).__name__}")
         if web_dash:
-            log.info(f"WEB_UPDATE: {len(unique)} unique signals, web_dash={web_dash}")
             sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                               key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
             ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
