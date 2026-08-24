@@ -29,6 +29,7 @@ from history import SignalHistory
 from export import export_csv, export_json
 from blacklist import load_blacklist, filter_blacklisted
 from scan_accel import ScanAccelerator
+from perimeter import PerimeterMode
 from rf_protocols import identify_by_freq as rfproto_identify, get_protocol_count as rfproto_count
 from rule_engine import RuleEngine
 
@@ -1468,12 +1469,9 @@ def play_voice_sample(freq_mhz):
 def is_camera_signal(freq_mhz, std, sig_type=""):
     """Check if signal is a hidden camera or FPV video transmitter."""
     # By signal type label
-    if sig_type in ("CAM?", "SPY-CAM", "CAM-DTV?", "FPV?", "WiFi/FPV",
-                    "Hidden Camera 900MHz", "Hidden Camera 1.2GHz",
-                    "Hidden Camera 5.8GHz", "WiFi 6E Camera 6GHz",
-                    "FPV Video TX 5.8GHz", "FPV Video TX 70cm",
-                    "FPV Video TX 1.2GHz", "WiFi Spy Camera",
-                    "WiFi 5GHz Spy Camera", "WiFi 6E Spy Camera"):
+    sig_lower = sig_type.lower()
+    camera_keywords = ["cam", "fpv", "spy", "hidden", "covert", "video link", "analog fpv"]
+    if any(kw in sig_lower for kw in camera_keywords):
         return True
     # By frequency + low std (narrowband continuous carrier = video TX)
     if std < 3:
