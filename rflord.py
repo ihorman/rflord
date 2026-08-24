@@ -68,6 +68,20 @@ _cursor_active = False
 _cursor_panel = 'sus'  # 'sus' or 'ok' — which panel the cursor is in
 _scan_status = ""  # Status line from scan workers (written by threads, read by main thread)
 
+# Perimeter Secured mode — auto-jam unknown signals
+_perimeter_active = False
+_perimeter_jamming = {}  # freq_mhz -> {'proc': Popen, 'started': timestamp, 'signal': signal_dict}
+_PERIMETER_IGNORE_BANDS = [
+    (88, 108),    # FM broadcast — legitimate
+    (174, 230),   # VHF TV/ham — legitimate
+    (470, 790),   # DVB-T — legitimate
+    (800, 960),   # GSM base stations — legitimate
+    (1805, 1880), # GSM 1800 — legitimate
+    (2110, 2170), # 3G — legitimate
+    (2400, 2500), # WiFi — too common to jam all
+    (5150, 5900), # WiFi 5GHz — too common
+]
+
 TTS_VOICE = _cfg['voice']['voice_name']
 HAL_EFFECT = os.path.expanduser(_cfg['voice']['hal_effect'])
 VOICE_THRESHOLD = _cfg['voice']['threshold']
@@ -1830,6 +1844,7 @@ def main_curses(stdscr, devices):
     
     status = [f"SDR Initialized: {', '.join(devices).upper()}"]
     draw_splash(stdscr, device, status)
+    time.sleep(3)  # Show splash for 3 seconds
     
     ensure_sink()
     artemis_db = load_artemis()

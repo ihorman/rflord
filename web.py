@@ -164,6 +164,7 @@ function update(data) {
   if (meta.version) document.getElementById('version').textContent = meta.version;
   if (meta.uptime) document.getElementById('uptime').textContent = meta.uptime;
   if (meta.alert_count != null) document.getElementById('alerts').textContent = meta.alert_count;
+  else if (meta.alerts != null) document.getElementById('alerts').textContent = meta.alerts;
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
 }
 
