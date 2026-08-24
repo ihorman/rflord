@@ -1485,6 +1485,9 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
+    # Cap effective width for readability on ultra-wide terminals
+    effective_w = min(w, 160)
+    
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
@@ -1507,13 +1510,15 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     elapsed = int(time.time() - start_time)
     uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60
     
-    mid = int(w * 0.6)
+    mid = int(effective_w * 0.55)
+    # Ensure minimum panel widths
+    mid = max(40, min(mid, effective_w - 35))
     row = 0
     
     # Header
     header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
     try:
-        stdscr.addstr(row, 0, (header[:w-1]).ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
+        stdscr.addstr(row, 0, (header[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
     row += 1
 
@@ -1521,7 +1526,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     if web_url:
         url_line = f" Web Dashboard: {web_url}"
         try:
-            stdscr.addstr(row, 0, (url_line[:w-1]).ljust(w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
+            stdscr.addstr(row, 0, (url_line[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_OK) | curses.A_BOLD)
         except: pass
         row += 1
 
@@ -1532,14 +1537,14 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         threat_line = f" {icon} {assessment.summary}"
         try:
             color = CP_DANGER if assessment.max_threat_level <= 1 else CP_SUS_YEL
-            stdscr.addstr(row, 0, (threat_line[:w-1]).ljust(w-1), curses.color_pair(color) | curses.A_BOLD)
+            stdscr.addstr(row, 0, (threat_line[:effective_w-1]).ljust(effective_w-1), curses.color_pair(color) | curses.A_BOLD)
         except: pass
         row += 1
 
     # Column titles
     try:
         stdscr.addstr(row, 0, f" {'SUSPICIOUS':^{mid-2}}"[:mid-1], curses.color_pair(CP_SUS_RED) | curses.A_BOLD)
-        stdscr.addstr(row, mid, f" {'KNOWN SIGNALS':^{w-mid-2}}"[:w-mid-1], curses.color_pair(CP_OK) | curses.A_BOLD)
+        stdscr.addstr(row, mid, f" {'KNOWN SIGNALS':^{effective_w-mid-2}}"[:effective_w-mid-1], curses.color_pair(CP_OK) | curses.A_BOLD)
     except: pass
     row += 1
     
@@ -1547,14 +1552,14 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     try:
         stdscr.addstr(row, 0, f"!    {'Freq':>5} {'Pwr':>5} {'Std':>4} {'Dist':>5} {'Type':<14} Desc"[:mid-1], curses.color_pair(CP_DIM))
         rhdr = f" {'Cnt':>4} {'Pwr':>6} {'Dist':>5} {'Bnd':>4} {'Type':<15}"
-        stdscr.addstr(row, mid, rhdr[:w-mid-1], curses.color_pair(CP_DIM))
+        stdscr.addstr(row, mid, rhdr[:effective_w-mid-1], curses.color_pair(CP_DIM))
     except: pass
     row += 1
     
     # Separator
     try:
         stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1], curses.color_pair(CP_SEP))
-        stdscr.addstr(row, mid, (" " + "─" * (w-mid-2))[:w-mid-1], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, mid, (" " + "─" * (effective_w-mid-2))[:effective_w-mid-1], curses.color_pair(CP_SEP))
     except: pass
     row += 1
     
@@ -1573,7 +1578,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
                 cp = CP_DANGER
             else:
                 cp = CP_SUS_RED
-            remark_w = max(20, mid - 40)
+            remark_w = max(15, mid - 38)
             remark = g['remark'][:remark_w]
             sev = '!!!' if cls == 'danger' else ('!! ' if cls == 'sus' else '!  ')
             # Trend arrow
@@ -1609,14 +1614,14 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
             # Cursor indicator — right panel (known)
             cursor_mark = '▸' if (_cursor_active and _cursor_panel == 'ok' and i == _cursor_pos) else ' '
             # Right table: cnt(4)+sp+pwr(6)+sp+dist(5)+sp+band(4)+sp = 21 fixed
-            id_w = max(15, (w - mid) - 22)
+            id_w = max(15, (effective_w - mid) - 22)
             type_str = g['type'][:id_w]
             line = f"{cursor_mark}{cnt:>4} {g['peak']:>+6.1f} {g['dist']:>5} {g['band']:>4} {type_str}"
             try:
                 attr = curses.color_pair(CP_OK)
                 if _cursor_active and _cursor_panel == 'ok' and i == _cursor_pos:
                     attr |= curses.A_REVERSE
-                stdscr.addstr(row, mid, line[:w-mid-1], attr)
+                stdscr.addstr(row, mid, line[:effective_w-mid-1], attr)
             except: pass
         
         row += 1
@@ -1624,7 +1629,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     # Footer
     try:
         stdscr.addstr(row, 0, (" " + "─" * (mid-2))[:mid-1], curses.color_pair(CP_SEP))
-        stdscr.addstr(row, mid, (" " + "─" * (w-mid-2))[:w-mid-1], curses.color_pair(CP_SEP))
+        stdscr.addstr(row, mid, (" " + "─" * (effective_w-mid-2))[:effective_w-mid-1], curses.color_pair(CP_SEP))
     except: pass
     row += 1
     
@@ -1645,7 +1650,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         else:
             cur_str = ""
         keys = f" q:Quit  r:Rescan  v:Voice({voice_str})  m:Mute  s:Suppress({sup_str})  +/-:Interval({INTERVAL}s)  ←→:Panel  ↑↓:Navigate  d:Detail  e:Export  l:Log  h:History{cur_str}{extra}"
-        stdscr.addstr(row, 0, (keys[:w-1]).ljust(w-1), curses.color_pair(CP_DIM))
+        stdscr.addstr(row, 0, (keys[:effective_w-1]).ljust(effective_w-1), curses.color_pair(CP_DIM))
     except: pass
     
     # Clear any remaining rows below (leftover from previous draw)
