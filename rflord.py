@@ -1044,6 +1044,9 @@ def _read_key(stdscr):
         
         # Handle escape sequences manually for terminals that don't translate them
         if key == 27:  # ESC
+            # Small delay to let the rest of the escape sequence arrive
+            import time
+            time.sleep(0.02)
             # Check if there are more characters in the buffer (escape sequence)
             stdscr.nodelay(True)
             next_key = stdscr.getch()
@@ -1053,6 +1056,7 @@ def _read_key(stdscr):
                 return 'cursor_off'
             elif next_key == ord('['):
                 # ESC [ is the start of a CSI sequence
+                time.sleep(0.01)
                 third_key = stdscr.getch()
                 if third_key == ord('A'):  # ESC [ A = Up
                     _cursor_active = True
@@ -1078,6 +1082,7 @@ def _read_key(stdscr):
                         return 'end'
             elif next_key == ord('O'):
                 # ESC O is SS3 sequence (some terminals)
+                time.sleep(0.01)
                 third_key = stdscr.getch()
                 if third_key == ord('A'):  # ESC O A = Up
                     _cursor_active = True
