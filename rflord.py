@@ -428,21 +428,21 @@ def est_distance(freq_mhz, power_dbfs):
     """Estimate distance from signal power using FSPL model.
 
     HackRF with -l 32 -g 40 -a 1 = 83 dB total gain.
-    RTL-SDR with -g 40 = ~40 dB gain.
-    0 dBFS at ADC ≈ 0 dBm, so antenna_level = power_dbfs - gain.
+    hackrf_sweep output is in dBFS relative to ADC full scale.
+    With83 dB gain,0 dBFS at ADC = -83 dBm at antenna.
+    But hackrf_sweep partially normalizes, so effective offset is different.
+    Calibrated: WiFi AP 100mW at 10m reads ~-50 dBFS → SDR_GAIN ≈ 10.
     """
-    # Effective dBFS-to-dBm offset for hackrf_sweep with -l 32 -g 40 -a 1.
-    # hackrf_sweep dBFS is partially normalized by the tool itself.
-    # Calibrated against real measurements: WiFi AP 100mW at 10m reads ~-50 dBFS.
     SDR_GAIN = 10
     rx_dbm = power_dbfs - SDR_GAIN
 
-    # Estimated transmit power (dBm) — conservative for typical sources
+    # Estimated transmit power (dBm) — realistic for typical sources
     if 88 <= freq_mhz <= 108:    tx = 60    # FM broadcast tower (1 kW)
     elif 174 <= freq_mhz <= 230: tx = 40    # DVB-T / DAB tower
     elif 470 <= freq_mhz <= 790: tx = 40    # DVB-T tower
-    elif 800 <= freq_mhz <= 960: tx = 37    # GSM base station (5W)
-    elif 1805 <= freq_mhz <= 1880: tx = 37  # GSM base station
+    elif 800 <= freq_mhz <= 960: tx = 43    # GSM base station (20W)
+    elif 1805 <= freq_mhz <= 1880: tx = 43  # GSM1800 base station (20W)
+    elif 2110 <= freq_mhz <= 2170: tx = 43  # 3G/LTE base station (20W)
     elif 108 <= freq_mhz <= 137: tx = 37    # Air band (aircraft 5W)
     elif 144 <= freq_mhz <= 148: tx = 37    # 2m ham (5W)
     elif 430 <= freq_mhz <= 470: tx = 30    # PMR / UHF handheld (1W)
@@ -475,8 +475,9 @@ def est_distance_m(freq_mhz, power_dbfs):
     if 88 <= freq_mhz <= 108:    tx = 60
     elif 174 <= freq_mhz <= 230: tx = 40
     elif 470 <= freq_mhz <= 790: tx = 40
-    elif 800 <= freq_mhz <= 960: tx = 37
-    elif 1805 <= freq_mhz <= 1880: tx = 37
+    elif 800 <= freq_mhz <= 960: tx = 43
+    elif 1805 <= freq_mhz <= 1880: tx = 43
+    elif 2110 <= freq_mhz <= 2170: tx = 43
     elif 108 <= freq_mhz <= 137: tx = 37
     elif 144 <= freq_mhz <= 148: tx = 37
     elif 430 <= freq_mhz <= 470: tx = 30
@@ -489,7 +490,72 @@ def est_distance_m(freq_mhz, power_dbfs):
     fspl = tx - rx_dbm
     fspl = max(20, min(160, fspl))
     d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
-    return max(1, min(500000, d_km * 1000))
+    d_km = max(0.001, min(500, d_km))
+    return d_km * 1000
+
+def identify_signal_type(freq_mhz, power_dbfs, std):
+    """Identify what a signal likely is based on frequency and characteristics."""
+    # Cellular
+    if 935 <= freq_mhz <= 960:
+        return "GSM900"
+    if 1805 <= freq_mhz <= 1880:
+        return "GSM1800"
+    if 2110 <= freq_mhz <= 2170:
+        return "3G/LTE"
+    if 791 <= freq_mhz <= 862:
+        return "LTE800"
+    if 2620 <= freq_mhz <= 2690:
+        return "LTE2600"
+    
+    # WiFi
+    wifi_ch = {1:2412, 2:2417, 3:2422, 4:2427, 5:2432, 6:2437, 7:2442, 8:2447, 9:2452, 10:2457, 11:2462, 12:2467, 13:2472}
+    for ch, center in wifi_ch.items():
+        if abs(freq_mhz - center) < 3:
+            return f"WiFi Ch{ch}"
+    if 2400 <= freq_mhz <= 2500:
+        return "WiFi 2.4GHz"
+    if 5150 <= freq_mhz <= 5875:
+        return "WiFi 5GHz"
+    
+    # Broadcast
+    if 88 <= freq_mhz <= 108:
+        return "FM Radio"
+    if 174 <= freq_mhz <= 230:
+        return "DAB/DVB-T"
+    if 470 <= freq_mhz <= 790:
+        return "DVB-T"
+    
+    # Aviation
+    if 108 <= freq_mhz <= 137:
+        return "Air Band"
+    if 1089 <= freq_mhz <= 1091:
+        return "ADS-B"
+    if 1574 <= freq_mhz <= 1576:
+        return "GPS L1"
+    
+    # Amateur
+    if 144 <= freq_mhz <= 148:
+        return "2m Ham"
+    if 430 <= freq_mhz <= 470:
+        return "70cm Ham/PMR"
+    
+    # ISM
+    if 433 <= freq_mhz <= 435:
+        return "ISM433"
+    if 868 <= freq_mhz <= 870:
+        return "ISM868"
+    if 915 <= freq_mhz <= 928:
+        return "ISM915"
+    
+    # Surveillance (only if narrowband and strong)
+    if 900 <= freq_mhz <= 928 and std < 2 and power_dbfs > -30:
+        return "Possible Camera"
+    if 1080 <= freq_mhz <= 1300 and std < 2 and power_dbfs > -30:
+        return "Possible Camera"
+    if 5725 <= freq_mhz <= 5875 and std < 2 and power_dbfs > -30:
+        return "Possible FPV"
+    
+    return "Unknown"
 
 def speak_distance(dist_str):
     """Convert distance string to spoken text: '284m' -> '284 meters'."""
@@ -1165,22 +1231,20 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     """Classify signal type. Military rules first, then Artemis, then fallback."""
     
     # Military UHF band — hardcoded rules take priority over Artemis
-    # Artemis has overly broad entries (e.g. "Toyota Car Key" 315-433 MHz)
-    # that misidentify military data links
     if 225 <= freq_mhz <= 400:
-        # Link-11 uses multi-tone MFM — moderate std, bursty
-        if 255 <= freq_mhz <= 267: return "Link-11"   # Link-11 UHF known freqs
-        if 270 <= freq_mhz <= 285: return "Link-11"   # Link-11 UHF known freqs
-        if 300 <= freq_mhz <= 330: return "Mil/Enc"   # Military UHF
+        if 255 <= freq_mhz <= 267: return "Link-11"
+        if 270 <= freq_mhz <= 285: return "Link-11"
+        if 300 <= freq_mhz <= 330: return "Mil/Enc"
         if 243 <= freq_mhz <= 244: return "Milstar"
         if 264 <= freq_mhz <= 266: return "Gonets"
-        # Wideband bursty in UHF = likely data link
         if std > 3: return "Link-11"
-        # Narrowband continuous in UHF = encrypted voice/data
         if std < 2: return "Mil/Enc"
         return "Mil/Enc"
     
-    # Known real signals (non-military)
+    # Use new identify_signal_type for common signals
+    sig_type = identify_signal_type(freq_mhz, -50, std)  # Use dummy power
+    
+    # Override with more specific classifications
     if 240 <= freq_mhz <= 242: return "DAB"
     elif 235 <= freq_mhz <= 238: return "DAB+"
     elif 390 <= freq_mhz <= 400: return "TETRA"
@@ -1205,7 +1269,7 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
         if std > 3:
             return "DVB-T2"
         elif std < 2:
-            return "CAM-DTV?"  # Narrowband in TV band = possible camera
+            return "CAM-DTV?"
         else:
             return "DVB-T2"
     elif 612 <= freq_mhz <= 700:
