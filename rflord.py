@@ -1032,6 +1032,61 @@ def _read_key(stdscr):
         key = stdscr.getch()
         if key == -1:
             return None
+        
+        # Handle escape sequences manually for terminals that don't translate them
+        if key == 27:  # ESC
+            # Check if there are more characters in the buffer (escape sequence)
+            stdscr.nodelay(True)
+            next_key = stdscr.getch()
+            if next_key == -1:
+                # Just ESC key pressed
+                _cursor_active = False
+                return 'cursor_off'
+            elif next_key == ord('['):
+                # ESC [ is the start of a CSI sequence
+                third_key = stdscr.getch()
+                if third_key == ord('A'):  # ESC [ A = Up
+                    _cursor_active = True
+                    return 'cursor_up'
+                elif third_key == ord('B'):  # ESC [ B = Down
+                    _cursor_active = True
+                    return 'cursor_down'
+                elif third_key == ord('C'):  # ESC [ C = Right
+                    _cursor_active = True
+                    return 'cursor_right'
+                elif third_key == ord('D'):  # ESC [ D = Left
+                    _cursor_active = True
+                    return 'cursor_left'
+                elif third_key == ord('1'):
+                    # ESC [ 1 ~ = Home
+                    fourth_key = stdscr.getch()
+                    if fourth_key == ord('~'):
+                        return 'home'
+                elif third_key == ord('4'):
+                    # ESC [ 4 ~ = End
+                    fourth_key = stdscr.getch()
+                    if fourth_key == ord('~'):
+                        return 'end'
+            elif next_key == ord('O'):
+                # ESC O is SS3 sequence (some terminals)
+                third_key = stdscr.getch()
+                if third_key == ord('A'):  # ESC O A = Up
+                    _cursor_active = True
+                    return 'cursor_up'
+                elif third_key == ord('B'):  # ESC O B = Down
+                    _cursor_active = True
+                    return 'cursor_down'
+                elif third_key == ord('C'):  # ESC O C = Right
+                    _cursor_active = True
+                    return 'cursor_right'
+                elif third_key == ord('D'):  # ESC O D = Left
+                    _cursor_active = True
+                    return 'cursor_left'
+            # Unknown escape sequence - deactivate cursor
+            _cursor_active = False
+            return 'cursor_off'
+        
+        # Regular key handling
         if key == ord('q') or key == ord('Q'):
             return 'quit'
         elif key == ord('r') or key == ord('R'):
@@ -1068,9 +1123,6 @@ def _read_key(stdscr):
             return 'log'
         elif key == ord('h') or key == ord('H'):
             return 'history'
-        elif key == 27:  # ESC — deactivate cursor
-            _cursor_active = False
-            return 'cursor_off'
     except Exception as e:
         log.warning(f"_read_key exception: {e}")
         # Recover curses state WITHOUT clearing screen
