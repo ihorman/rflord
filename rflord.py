@@ -1660,7 +1660,7 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.clrtobot()
     stdscr.refresh()
 
-def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None, assessment=None):
+def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, known_freqs=None, voice_enabled=True, history=None, web_url=None, assessment=None, perimeter=None):
     """Draw split-screen table: suspicious left, known right. Fully dynamic layout."""
     global _cursor_pos, _cursor_active, _cursor_panel
     if known_freqs is None:
@@ -1700,7 +1700,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     row = 0
     
     # === HEADER (full width) ===
-    header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)} │ Author: Ihor Kolodyuk"
+    peri_status = " │ 🛡️ PERIMETER SECURED" if perimeter and perimeter.active else ""
+    header = f" RfLord {VERSION} {time.strftime('%H:%M:%S')} │ Up {uh:02d}:{um:02d}:{us:02d} │ Alerts {alert_count} │ Tracked {len(known_freqs)} │ Sig {len(signals)}{peri_status} │ Author: Ihor Kolodyuk"
     try:
         stdscr.addstr(row, 0, header[:W].ljust(W), curses.color_pair(CP_HEADER) | curses.A_BOLD)
     except: pass
@@ -1807,7 +1808,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     voice_str = "ON" if voice_enabled else "OFF"
     sup_str = "ON" if _suppress_active else "OFF"
-    peri_str = "ON" if perimeter.active else "OFF"
+    peri_str = "ON" if perimeter and perimeter.active else "OFF"
     cur_str = ""
     if _cursor_active:
         if _cursor_panel == 'sus' and sus_grouped:
@@ -1815,7 +1816,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         elif _cursor_panel == 'ok' and ok_grouped:
             cur_str = f" [OK {_cursor_pos+1}/{len(ok_grouped)}]"
     
-    keys = f" q:Quit r:Rescan c:Capture v:Voice({voice_str}) m:Mute s:Suppress({sup_str}) +/-:Interval({INTERVAL}s) ←→:Panel ↑↓:Nav d:Detail e:Export l:Log h:History{cur_str}{extra}"
+    keys = f" q:Quit r:Rescan c:Capture v:Voice({voice_str}) m:Mute s:Suppress({sup_str}) p:Perimeter({peri_str}) +/-:Interval({INTERVAL}s) ←→:Panel ↑↓:Nav d:Detail e:Export l:Log h:History{cur_str}{extra}"
     try:
         stdscr.addstr(row, 0, keys[:W].ljust(W), curses.color_pair(CP_DIM))
     except: pass
@@ -2202,7 +2203,7 @@ def main_curses(stdscr, devices):
         if not first_scan_done:
             stdscr.clear()
             stdscr.refresh()
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
         
         # Update splash status after first scan
         if not first_scan_done:
@@ -2360,7 +2361,7 @@ def main_curses(stdscr, devices):
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
         
         # Refresh table after voice alerts
-        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+        draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
         
         # Wait with non-blocking key reads (200ms timeout per getch)
         wait_end = time.time() + INTERVAL
@@ -2373,17 +2374,17 @@ def main_curses(stdscr, devices):
                 break
             elif key == 'mute':
                 voice_enabled = not voice_enabled
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'voice':
                 sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             elif key == 'interval_up':
                 INTERVAL = min(600, INTERVAL + 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'interval_down':
                 INTERVAL = max(30, INTERVAL - 30)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'suppress':
                 _show_suppress_menu(stdscr)
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
@@ -2393,7 +2394,7 @@ def main_curses(stdscr, devices):
                 else:
                     _suppress_active = False
                     _suppress_stop()
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'perimeter':
                 if not has_hackrf:
                     log.warning("PERIMETER: HackRF required for perimeter mode")
@@ -2406,10 +2407,10 @@ def main_curses(stdscr, devices):
                         perimeter.stop_all()
                         log.warning("PERIMETER: SECURED MODE DEACTIVATED")
                         speak("Perimeter secured mode deactivated")
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_up':
                 _cursor_pos = max(0, _cursor_pos - 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_down':
                 # Get max count for active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
@@ -2420,17 +2421,17 @@ def main_curses(stdscr, devices):
                 ok_grp = group_signals_by_type(ok_list, artemis_db)
                 max_pos = len(sus_grp) - 1 if _cursor_panel == 'sus' else len(ok_grp) - 1
                 _cursor_pos = min(max_pos, _cursor_pos + 1)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_left':
                 _cursor_panel = 'sus'
                 _cursor_pos = 0
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_right':
                 _cursor_panel = 'ok'
                 _cursor_pos = 0
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_off':
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'details':
                 # Get the selected signal from active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
@@ -2444,7 +2445,7 @@ def main_curses(stdscr, devices):
                     g = active_grp[_cursor_pos]
                     signal = g.get('_strongest', g)
                     _show_signal_detail(stdscr, signal, artemis_db)
-                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                    draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'capture':
                 # Capture screenshot from selected signal (camera/FPV)
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
@@ -2499,13 +2500,13 @@ def main_curses(stdscr, devices):
                     export_csv(filepath, unique)
                 else:
                     export_json(filepath, unique)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'log':
                 _show_log_view(stdscr)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'history':
                 _show_history_view(stdscr, _cursor_pos, unique, artemis_db, history)
-                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment)
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
       except Exception as e:
         log.warning(f"Main loop exception: {e}")
         try:
@@ -2573,7 +2574,10 @@ def time_ago(timestamp):
         return f"{d}d{h:02d}h" if h else f"{d}d"
 
 def main():
-    # Detect device BEFORE curses takes over terminal
+    # Check for --perimeter flag
+    perimeter_mode = "--perimeter" in sys.argv
+    if perimeter_mode:
+        print("🛡️ PERIMETER SECURED mode enabled", flush=True)    # Detect device BEFORE curses takes over terminal
     devices = detect_device()
     if not devices:
         print("No SDR device found.")
