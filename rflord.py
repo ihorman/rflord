@@ -488,22 +488,30 @@ def classify(f, power, std):
         return "ok"
     
     # === POTENTIALLY SUSPICIOUS ===
-    # Only flag if narrowband AND strong AND in known surveillance band
+    # Flag if narrowband AND in known surveillance band
     
     # Spy camera900 MHz band
-    if 900 <= f <= 928 and std < 2 and power > -30:
+    if 900 <= f <= 928 and std < 2 and power > -40:
         return "sus"
     
-    # Spy camera1.2 GHz band
-    if 1080 <= f <= 1300 and std < 2 and power > -30:
+    # Spy camera1.2 GHz band (FPV, analog cameras)
+    if 1080 <= f <= 1300 and std < 2 and power > -40:
         return "sus"
     
     # FPV video5.8 GHz
-    if 5725 <= f <= 5875 and std < 2 and power > -30:
+    if 5725 <= f <= 5875 and std < 2 and power > -40:
+        return "sus"
+    
+    # Any narrowband signal in surveillance band is suspicious
+    if 900 <= f <= 928 and std < 3:
+        return "sus"
+    if 1080 <= f <= 1300 and std < 3:
+        return "sus"
+    if 5725 <= f <= 5875 and std < 3:
         return "sus"
     
     # Unknown strong signal
-    if power > -15:
+    if power > -20:
         return "sus"
     
     return "ok"
