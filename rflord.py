@@ -412,116 +412,62 @@ def group_suspicious(signals, artemis_db=None):
 def classify(f, power, std):
     """Classify signal as ok/sus/danger.
     
-    Conservative approach: only flag as suspicious if signal is:
-    1. In a known surveillance frequency band AND
-    2. Narrowband (std < 2) AND
-    3. Strong (power > -30 dBFS) AND
-    4. NOT in a known legitimate band
+    Uses frequency + power + distance heuristic:
+    - Close range (<200m) any signal = SUSPICIOUS
+    - Very close (<50m) = DANGER
+    - Far (>200m) legitimate bands = ok
     """
     
-    # === KNOWN LEGITIMATE SIGNALS ===
+    # Calculate distance
+    dist_m = est_distance_m(f, power)
     
-    # WiFi 2.4 GHz
-    if 2400 <= f <= 2500:
-        return "ok"
-    
-    # WiFi 5 GHz
-    if 5150 <= f <= 5875:
-        return "ok"
-    
-    # GSM/LTE cellular
-    if 925 <= f <= 960:
-        return "ok"
-    if 1805 <= f <= 1880:
-        return "ok"
-    if 1700 <= f <= 2000:
-        return "ok"
-    if 2000 <= f <= 2200:
-        return "ok"
-    if 2300 <= f <= 2700:
-        return "ok"
-    if 791 <= f <= 862:
-        return "ok"
-    if 2620 <= f <= 2690:
-        return "ok"
-    
-    # FM Radio
-    if 88 <= f <= 108:
-        return "ok"
-    
-    # DAB/DVB-T
-    if 174 <= f <= 230:
-        return "ok"
-    if 470 <= f <= 790:
-        return "ok"
-    
-    # Aviation
-    if 108 <= f <= 137:
-        return "ok"
-    if 1089 <= f <= 1091:
-        return "ok"
-    if 1574 <= f <= 1576:
-        return "ok"
-    
-    # Amateur radio
-    if 144 <= f <= 148:
-        return "ok"
-    if 430 <= f <= 470:
-        return "ok"
-    
-    # PMR/FRS/GMRS
-    if 446 <= f <= 447:
-        return "ok"
-    if 462 <= f <= 468:
-        return "ok"
-    
-    # ISM bands
-    if 433 <= f <= 435:
-        return "ok"
-    if 868 <= f <= 870:
-        return "ok"
-    if 915 <= f <= 928:
-        return "ok"
-    
-    # UHF TV
-    if 400 <= f <= 470:
-        return "ok"
-    if 510 <= f <= 610:
-        return "ok"
-    
-    # Military — suspicious if strong (potential threat)
-    if 225 <= f <= 400:
-        if power > -30:
-            return "sus"
-        return "ok"
-    
-    # === POTENTIALLY SUSPICIOUS ===
-    # Flag if narrowband AND in known surveillance band
-    
-    # Spy camera900 MHz band
-    if 900 <= f <= 928 and std < 2 and power > -40:
+    # === CLOSE RANGE = SUSPICIOUS regardless of frequency ===
+    if dist_m < 50:
+        return "danger"
+    if dist_m < 200:
+        # Close range — check if it's a known legitimate local signal
+        # WiFi, Bluetooth, personal devices are OK at close range
+        if 2400 <= f <= 2500: return "ok"  # WiFi/BT
+        if 5150 <= f <= 5875: return "ok"  # WiFi 5GHz
+        if 88 <= f <= 108: return "ok"  # FM radio
+        # Everything else at close range is suspicious
         return "sus"
     
-    # Spy camera1.2 GHz band (FPV, analog cameras)
-    if 1080 <= f <= 1300 and std < 2 and power > -40:
-        return "sus"
+    # === FAR RANGE (>200m) — use frequency-based classification ===
     
-    # FPV video5.8 GHz
-    if 5725 <= f <= 5875 and std < 2 and power > -40:
-        return "sus"
+    # Known legitimate signals
+    if 2400 <= f <= 2500: return "ok"
+    if 5150 <= f <= 5875: return "ok"
+    if 925 <= f <= 960: return "ok"
+    if 1805 <= f <= 1880: return "ok"
+    if 1700 <= f <= 2000: return "ok"
+    if 2000 <= f <= 2200: return "ok"
+    if 2300 <= f <= 2700: return "ok"
+    if 791 <= f <= 862: return "ok"
+    if 2620 <= f <= 2690: return "ok"
+    if 88 <= f <= 108: return "ok"
+    if 174 <= f <= 230: return "ok"
+    if 470 <= f <= 790: return "ok"
+    if 108 <= f <= 137: return "ok"
+    if 1089 <= f <= 1091: return "ok"
+    if 1574 <= f <= 1576: return "ok"
+    if 144 <= f <= 148: return "ok"
+    if 430 <= f <= 470: return "ok"
+    if 446 <= f <= 447: return "ok"
+    if 462 <= f <= 468: return "ok"
+    if 433 <= f <= 435: return "ok"
+    if 868 <= f <= 870: return "ok"
+    if 915 <= f <= 928: return "ok"
+    if 400 <= f <= 470: return "ok"
+    if 510 <= f <= 610: return "ok"
+    if 225 <= f <= 400: return "ok"
     
-    # Any narrowband signal in surveillance band is suspicious
-    if 900 <= f <= 928 and std < 3:
-        return "sus"
-    if 1080 <= f <= 1300 and std < 3:
-        return "sus"
-    if 5725 <= f <= 5875 and std < 3:
-        return "sus"
+    # Surveillance bands — suspicious even far away
+    if 900 <= f <= 928 and std < 3: return "sus"
+    if 1080 <= f <= 1300 and std < 3: return "sus"
+    if 5725 <= f <= 5875 and std < 3: return "sus"
     
-    # Unknown strong signal
-    if power > -20:
-        return "sus"
-    
+    if power > -20: return "sus"
     return "ok"
 
 def est_distance(freq_mhz, power_dbfs):
