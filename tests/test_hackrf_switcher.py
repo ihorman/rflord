@@ -10,25 +10,41 @@ class TestDeviceDetection:
     """Device detection based on lsusb output."""
 
     def test_hackrf_detected(self):
-        with patch('rflord.run_cmd') as mock_run:
+        def mock_sub_run(cmd, **kwargs):
+            if any('hackrf_info' in str(c) for c in cmd):
+                return MagicMock(returncode=0, stdout="Found HackRF\n", stderr="")
+            return MagicMock(returncode=1, stdout="", stderr="")
+        with patch('rflord.run_cmd') as mock_run, \
+             patch('rflord.subprocess.run', side_effect=mock_sub_run):
             mock_run.return_value = "Bus 001 Device 005: ID 1d50:6089 OpenMoko, Inc. Great Scott Gadgets HackRF One SDR"
             from rflord import detect_device
             assert detect_device() == ["hackrf"]
 
     def test_rtlsdr_detected(self):
-        with patch('rflord.run_cmd') as mock_run:
+        def mock_sub_run(cmd, **kwargs):
+            return MagicMock(returncode=1, stdout="", stderr="")
+        with patch('rflord.run_cmd') as mock_run, \
+             patch('rflord.subprocess.run', side_effect=mock_sub_run):
             mock_run.return_value = "Bus 001 Device 005: ID 0bda:2838 Realtek Semiconductor Corp. RTL2838"
             from rflord import detect_device
             assert detect_device() == ["rtlsdr"]
 
     def test_no_device_returns_empty(self):
-        with patch('rflord.run_cmd') as mock_run:
+        def mock_sub_run(cmd, **kwargs):
+            return MagicMock(returncode=1, stdout="", stderr="")
+        with patch('rflord.run_cmd') as mock_run, \
+             patch('rflord.subprocess.run', side_effect=mock_sub_run):
             mock_run.return_value = "Bus 001 Device 001: ID 1d6b:0002 Linux Foundation 2.0 root hub"
             from rflord import detect_device
             assert detect_device() == []
 
     def test_both_devices_detected(self):
-        with patch('rflord.run_cmd') as mock_run:
+        def mock_sub_run(cmd, **kwargs):
+            if any('hackrf_info' in str(c) for c in cmd):
+                return MagicMock(returncode=0, stdout="Found HackRF\n", stderr="")
+            return MagicMock(returncode=1, stdout="", stderr="")
+        with patch('rflord.run_cmd') as mock_run, \
+             patch('rflord.subprocess.run', side_effect=mock_sub_run):
             mock_run.return_value = (
                 "Bus 001 Device 005: ID 1d50:6089 OpenMoko HackRF\n"
                 "Bus 001 Device 006: ID 0bda:2838 Realtek RTL2838"

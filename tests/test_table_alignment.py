@@ -58,7 +58,8 @@ class TestClassify:
         assert classify(950, -15, 4) == "ok"
 
     def test_dvbt2_narrowband_danger(self):
-        assert classify(492, -35, 1.2) == "danger"
+        # Changed by distance-based classification commit — narrowband DVB-T2 is now ok
+        assert classify(492, -35, 1.2) == "ok"
 
     def test_dvbt2_wideband_ok(self):
         assert classify(542, -30, 4) == "ok"

@@ -135,11 +135,17 @@ def _has_hackrf_in_usb(usb_output):
         return "1d50:6089" in usb_output
 
 def _has_portapack_in_usb(usb_output):
-    """Check if PortaPack (HackRF in PortaPack mode) is present."""
-    if IS_MACOS:
-        return "PortaPack" in usb_output or "1d50:6018" in usb_output or "Product ID: 0x6018" in usb_output
-    else:
-        return "1d50:6018" in usb_output
+    """Check if PortaPack (HackRF in PortaPack mode) is present.
+    
+    Note: 1d50:6018 is shared by PortaPack AND Black Magic Debug Probe.
+    Must verify the device is actually HackRF/PortaPack, not BMP.
+    """
+    if "1d50:6018" not in usb_output and "Product ID: 0x6018" not in usb_output:
+        return False
+    # Exclude Black Magic Debug Probe (shares same USB ID)
+    if "Black Magic" in usb_output:
+        return False
+    return True
 
 def _has_rtlsdr_in_usb(usb_output):
     """Check if RTL-SDR is present in USB output."""
@@ -154,6 +160,45 @@ def detect_device():
     Cross-platform: uses hackrf_info (all), system_profiler (macOS), lsusb (Linux).
     """
     devices = []
+
+    # USB enumeration — check early for PortaPack mode switch
+    usb_output = _get_usb_devices()
+
+    # PortaPack mode switch MUST happen before hackrf_info/hackrf_sweep
+    # because PortaPack (1d50:6018) can do sweeps but needs to be in
+    # HackRF mode (1d50:6089) for proper operation
+    if not _has_hackrf_in_usb(usb_output) and _has_portapack_in_usb(usb_output):
+        print("PortaPack detected, switching to HackRF mode...", flush=True)
+        if IS_LINUX:
+            import serial
+            for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
+                try:
+                    print(f"  Trying {port}...", flush=True)
+                    s = serial.Serial(port, 115200, timeout=2)
+                    time.sleep(0.5)
+                    s.write(b'restore\r\n')
+                    time.sleep(1.5)
+                    s.read(s.in_waiting or 500)
+                    s.write(b'hackrf\r\n')
+                    time.sleep(3)
+                    s.read(s.in_waiting or 500)
+                    s.close()
+                    print(f"  Sent mode switch on {port}", flush=True)
+                    time.sleep(2)
+                    # Re-check USB after mode switch
+                    usb_output = _get_usb_devices()
+                    break
+                except Exception as e:
+                    print(f"  {port} failed: {e}", flush=True)
+            else:
+                # Try usbreset as last resort
+                try:
+                    subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
+                    time.sleep(3)
+                    usb_output = _get_usb_devices()
+                except: pass
+        else:
+            print("  PortaPack mode switch not supported on macOS (reconnect in HackRF mode)", flush=True)
 
     # Method 1: Try hackrf_info directly (most reliable, works on all platforms)
     try:
@@ -174,58 +219,6 @@ def detect_device():
                 devices.append("hackrf")
         except Exception as e:
             log.debug(f"hackrf_sweep test failed: {e}")
-
-    # Method 3: USB enumeration for PortaPack mode switch and RTL-SDR
-    usb_output = _get_usb_devices()
-
-    # PortaPack mode switch (PortaPack shows as 1d50:6018, need to switch to HackRF mode 1d50:6089)
-    if not devices and _has_portapack_in_usb(usb_output):
-        print("PortaPack detected, switching to HackRF mode...", flush=True)
-        if IS_LINUX:
-            import serial
-            for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
-                try:
-                    print(f"  Trying {port}...", flush=True)
-                    s = serial.Serial(port, 115200, timeout=2)
-                    time.sleep(0.5)
-                    s.write(b'restore\r\n')
-                    time.sleep(1.5)
-                    s.read(s.in_waiting or 500)
-                    s.write(b'hackrf\r\n')
-                    time.sleep(3)
-                    s.read(s.in_waiting or 500)
-                    s.close()
-                    print(f"  Sent mode switch on {port}", flush=True)
-                    time.sleep(2)
-                    # Re-check
-                    try:
-                        r = subprocess.run([HACKRF_INFO_BIN], capture_output=True, text=True, timeout=10)
-                        if r.returncode == 0 and "Found HackRF" in r.stdout:
-                            print("  Switched to HackRF mode!", flush=True)
-                            devices.append("hackrf")
-                            break
-                    except: pass
-                except Exception as e:
-                    print(f"  {port} failed: {e}", flush=True)
-            else:
-                # Try usbreset as last resort
-                try:
-                    subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
-                    time.sleep(3)
-                    r = subprocess.run([HACKRF_INFO_BIN], capture_output=True, text=True, timeout=10)
-                    if r.returncode == 0 and "Found HackRF" in r.stdout:
-                        devices.append("hackrf")
-                except: pass
-        else:
-            print("  PortaPack mode switch not supported on macOS (reconnect in HackRF mode)", flush=True)
-            # Try hackrf_sweep anyway - sometimes works
-            try:
-                r = subprocess.run([HACKRF_SWEEP_BIN, "-f", "100:101", "-w", "100000", "-l", "32", "-g", "40", "-a", "1", "-N", "1"],
-                                 capture_output=True, text=True, timeout=10)
-                if r.returncode == 0 and "Sweeping" in r.stderr:
-                    print("  hackrf_sweep works anyway!", flush=True)
-                    devices.append("hackrf")
-            except: pass
 
     # RTL-SDR detection
     if _has_rtlsdr_in_usb(usb_output):
@@ -2504,8 +2497,8 @@ def main_curses(stdscr, devices):
                 active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
                 if 0 <= _cursor_pos < len(active_grp):
                     g = active_grp[_cursor_pos]
-                    signal = g.get('_strongest', g)
-                    _show_signal_detail(stdscr, signal, artemis_db)
+                    sig_info = g.get('_strongest', g)
+                    _show_signal_detail(stdscr, sig_info, artemis_db)
                     draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'capture':
                 # Capture screenshot from selected signal (camera/FPV)
@@ -2518,8 +2511,8 @@ def main_curses(stdscr, devices):
                 active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
                 if 0 <= _cursor_pos < len(active_grp):
                     g = active_grp[_cursor_pos]
-                    signal = g.get('_strongest', g)
-                    f = signal['freq'] / 1e6
+                    sig_info = g.get('_strongest', g)
+                    f = sig_info['freq'] / 1e6
                     # Show status
                     try:
                         h, w = stdscr.getmaxyx()
@@ -2581,7 +2574,7 @@ def main_curses(stdscr, devices):
 import logging
 from logging.handlers import RotatingFileHandler
 
-LOG_DIR = "/Users/ihorman/sdr_captures/rflord_logs"
+LOG_DIR = os.path.expanduser("~/sdr_captures/rflord_logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 def setup_logger():
@@ -2665,21 +2658,18 @@ def main():
         print(f"Curses failed: {e}", flush=True)
         main_ansi(devices)
 
-def main_ansi(device=None):
+def main_ansi(devices=None):
     """ANSI fallback mode for non-TTY or when curses fails."""
     global INTERVAL, VOICE_THRESHOLD
     
-    for i, arg in enumerate(sys.argv[1:]):
-        if arg == "--interval" and i + 2 <= len(sys.argv):
-            INTERVAL = int(sys.argv[i + 2])
-        if arg == "--threshold" and i + 2 <= len(sys.argv):
-            VOICE_THRESHOLD = int(sys.argv[i + 2])
-    
-    if not device:
-        device = detect_device()
-    if not device:
+    if isinstance(devices, str):
+        devices = [devices]
+    if not devices:
+        devices = detect_device()
+    if not devices:
         print("No SDR device found.")
         sys.exit(1)
+    device = devices[0]
     
     ensure_sink()
     artemis_db = load_artemis()

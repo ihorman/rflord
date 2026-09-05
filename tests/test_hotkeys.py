@@ -601,6 +601,7 @@ class TestMainLoopKeyIntegration:
             'quit', 'rescan', 'mute', 'voice', 'interval_up', 'interval_down',
             'suppress', 'cursor_up', 'cursor_down', 'cursor_left', 'cursor_right',
             'cursor_off', 'details', 'export', 'log', 'history',
+            'perimeter', 'capture',
         }
         rflord_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'rflord.py')
         with open(rflord_path) as f:
