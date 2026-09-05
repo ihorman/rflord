@@ -138,13 +138,16 @@ def _has_portapack_in_usb(usb_output):
     """Check if PortaPack (HackRF in PortaPack mode) is present.
     
     Note: 1d50:6018 is shared by PortaPack AND Black Magic Debug Probe.
-    Must verify the device is actually HackRF/PortaPack, not BMP.
+    PortaPack firmware often shows as 'Black Magic Debug Probe' in lsusb.
+    Check for serial ports (/dev/ttyACM*) which PortaPack exposes.
     """
     if "1d50:6018" not in usb_output and "Product ID: 0x6018" not in usb_output:
         return False
-    # Exclude Black Magic Debug Probe (shares same USB ID)
-    if "Black Magic" in usb_output:
-        return False
+    # PortaPack exposes ACM serial ports; BMP typically doesn't (or uses different ones)
+    import glob
+    if glob.glob("/dev/ttyACM*"):
+        return True
+    # Fallback: if no serial ports, could still be PortaPack — try anyway
     return True
 
 def _has_rtlsdr_in_usb(usb_output):
