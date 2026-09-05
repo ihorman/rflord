@@ -174,6 +174,7 @@ def detect_device():
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         if IS_LINUX:
             import serial
+            switched = False
             for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
                 try:
                     print(f"  Trying {port}...", flush=True)
@@ -188,18 +189,25 @@ def detect_device():
                     s.close()
                     print(f"  Sent mode switch on {port}", flush=True)
                     time.sleep(2)
-                    # Re-check USB after mode switch
+                    # Check if switch worked
                     usb_output = _get_usb_devices()
-                    break
+                    if _has_hackrf_in_usb(usb_output):
+                        print("  Switched to HackRF mode!", flush=True)
+                        switched = True
+                        break
                 except Exception as e:
                     print(f"  {port} failed: {e}", flush=True)
-            else:
-                # Try usbreset as last resort
-                try:
-                    subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
-                    time.sleep(3)
-                    usb_output = _get_usb_devices()
-                except: pass
+            if not switched:
+                # Neither port worked — wait and try usbreset
+                time.sleep(3)
+                usb_output = _get_usb_devices()
+                if not _has_hackrf_in_usb(usb_output):
+                    print("  Switch failed. Trying usbreset...", flush=True)
+                    try:
+                        subprocess.run(["sudo", "usbreset", "1d50:6018"], capture_output=True, timeout=5)
+                        time.sleep(3)
+                        usb_output = _get_usb_devices()
+                    except: pass
         else:
             print("  PortaPack mode switch not supported on macOS (reconnect in HackRF mode)", flush=True)
 

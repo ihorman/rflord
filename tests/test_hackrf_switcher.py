@@ -117,10 +117,13 @@ class TestPortaPackSwitch:
 
     def test_portapack_switch_checks_result(self):
         """After switch fails, should check lsusb again (retry), then return None."""
+        def mock_sub_run(cmd, **kwargs):
+            return MagicMock(returncode=1, stdout="", stderr="")
         with patch('rflord.run_cmd') as mock_run, \
+             patch('rflord.subprocess.run', side_effect=mock_sub_run), \
              patch('serial.Serial') as mock_serial, \
              patch('time.sleep'):
-            # Initial lsusb -> after ACM1 -> after ACM0 -> in else branch -> after usbreset
+            # Initial lsusb -> after ACM1 -> after ACM0 -> else retry -> after usbreset
             mock_run.side_effect = [
                 "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # initial
                 "Bus 001 Device 005: ID 1d50:6018 OpenMoko PortaPack",  # after ACM1
