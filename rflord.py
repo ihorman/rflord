@@ -500,11 +500,15 @@ def est_distance(freq_mhz, power_dbfs):
 
     # Estimated transmit power (dBm) — realistic for typical sources
     if 88 <= freq_mhz <= 108:    tx = 60    # FM broadcast tower (1 kW)
-    elif 174 <= freq_mhz <= 230: tx = 40    # DVB-T / DAB tower
-    elif 470 <= freq_mhz <= 790: tx = 40    # DVB-T tower
+    elif 174 <= freq_mhz <= 230: tx = 50    # DVB-T / DAB tower (100W)
+    elif 470 <= freq_mhz <= 790: tx = 57    # DVB-T2 tower (500W) — Ukraine
+    elif 470 <= freq_mhz <= 860: tx = 57    # ISDB-T / analog TV tower (500W)
     elif 800 <= freq_mhz <= 960: tx = 43    # GSM base station (20W)
     elif 1805 <= freq_mhz <= 1880: tx = 43  # GSM1800 base station (20W)
+    elif 1920 <= freq_mhz <= 1980: tx = 43  # 3G UMTS uplink
     elif 2110 <= freq_mhz <= 2170: tx = 43  # 3G/LTE base station (20W)
+    elif 2620 <= freq_mhz <= 2690: tx = 43  # LTE2600 base station (20W)
+    elif 791 <= freq_mhz <= 862: tx = 43    # LTE800 base station (20W)
     elif 108 <= freq_mhz <= 137: tx = 37    # Air band (aircraft 5W)
     elif 144 <= freq_mhz <= 148: tx = 37    # 2m ham (5W)
     elif 430 <= freq_mhz <= 470: tx = 30    # PMR / UHF handheld (1W)
@@ -513,15 +517,32 @@ def est_distance(freq_mhz, power_dbfs):
     # Military bands — high power transmitters
     elif 30 <= freq_mhz <= 88:   tx = 40    # Military VHF (10W handheld, 50W vehicle)
     elif 225 <= freq_mhz <= 400: tx = 43    # Military UHF airband (20W aircraft)
-    elif 1300 <= freq_mhz <= 1400: tx = 37  # L-band military/radar (5W)
-    elif 2700 <= freq_mhz <= 3500: tx = 37  # S-band military/radar (5W)
-    elif 5250 <= freq_mhz <= 5850: tx = 37  # C-band radar (5W)
+    elif 1300 <= freq_mhz <= 1400: tx = 50  # L-band radar (100W — Cobra Dane, mil radar)
+    elif 2700 <= freq_mhz <= 3500: tx = 40  # S-band radar (10W)
+    elif 5250 <= freq_mhz <= 5850: tx = 40  # C-band radar (10W)
+    # Digital voice / trunked radio
+    elif 380 <= freq_mhz <= 400: tx = 37    # TETRAPOL / DMR public safety (5W)
+    elif 406 <= freq_mhz <= 430: tx = 37    # TETRAPOL / DMR public safety (5W)
+    elif 440 <= freq_mhz <= 470: tx = 37    # UHF public safety (5W)
+    elif 162 <= freq_mhz <= 174: tx = 37    # VHF public safety / marine (5W)
+    # Aviation / maritime
+    elif 156 <= freq_mhz <= 162: tx = 25    # Marine VHF (25W but typical 5W = 37)
+    elif 1087 <= freq_mhz <= 1095: tx = 27  # ADS-B transponder (500mW)
+    elif 1574 <= freq_mhz <= 1577: tx = 10  # GPS L1 (very weak at ground level)
+    elif 1227 <= freq_mhz <= 1228: tx = 10  # GPS L2
+    # IoT / utility meters / vehicle monitoring
+    elif 169 <= freq_mhz <= 170: tx = 27    # SRD/LoRa (500mW)
+    elif 868 <= freq_mhz <= 870: tx = 27    # EU LoRa/ISM (500mW)
+    elif 500 <= freq_mhz <= 530: tx = 30    # AVM / vehicle monitoring (1W)
+    elif 900 <= freq_mhz <= 930: tx = 30    # ISM / utility meters (1W)
+    elif 1880 <= freq_mhz <= 1900: tx = 23  # DECT (250mW)
     # Surveillance / spy devices — low power
     elif 5725 <= freq_mhz <= 5875: tx = 14  # FPV / spy camera (25mW)
-    elif 900 <= freq_mhz <= 928:  tx = 14   # Spy camera 900 MHz (25mW)
     elif 1080 <= freq_mhz <= 1300: tx = 14  # Spy camera 1.2 GHz (25mW)
     elif 420 <= freq_mhz <= 430:  tx = 20   # ISM/surveillance (100mW)
-    else: tx = 25                            # Default: ~300 mW
+    elif 315 <= freq_mhz <= 320:  tx = 10   # Key fobs / garage remotes (10mW)
+    elif 433 <= freq_mhz <= 435:  tx = 10   # ISM short-range (10mW)
+    else: tx = 27                            # Default: ~500 mW
 
     # Free-space path loss from link budget
     fspl = tx - rx_dbm  # dB
@@ -543,11 +564,15 @@ def est_distance_m(freq_mhz, power_dbfs):
     SDR_GAIN = 30
     rx_dbm = power_dbfs - SDR_GAIN
     if 88 <= freq_mhz <= 108:    tx = 60
-    elif 174 <= freq_mhz <= 230: tx = 40
-    elif 470 <= freq_mhz <= 790: tx = 40
+    elif 174 <= freq_mhz <= 230: tx = 50
+    elif 470 <= freq_mhz <= 790: tx = 57
+    elif 470 <= freq_mhz <= 860: tx = 57
     elif 800 <= freq_mhz <= 960: tx = 43
     elif 1805 <= freq_mhz <= 1880: tx = 43
+    elif 1920 <= freq_mhz <= 1980: tx = 43
     elif 2110 <= freq_mhz <= 2170: tx = 43
+    elif 2620 <= freq_mhz <= 2690: tx = 43
+    elif 791 <= freq_mhz <= 862: tx = 43
     elif 108 <= freq_mhz <= 137: tx = 37
     elif 144 <= freq_mhz <= 148: tx = 37
     elif 430 <= freq_mhz <= 470: tx = 30
@@ -555,14 +580,28 @@ def est_distance_m(freq_mhz, power_dbfs):
     elif 5150 <= freq_mhz <= 5900: tx = 23
     elif 30 <= freq_mhz <= 88:   tx = 40
     elif 225 <= freq_mhz <= 400: tx = 43
-    elif 1300 <= freq_mhz <= 1400: tx = 37
-    elif 2700 <= freq_mhz <= 3500: tx = 37
-    elif 5250 <= freq_mhz <= 5850: tx = 37
+    elif 1300 <= freq_mhz <= 1400: tx = 50
+    elif 2700 <= freq_mhz <= 3500: tx = 40
+    elif 5250 <= freq_mhz <= 5850: tx = 40
+    elif 380 <= freq_mhz <= 400: tx = 37
+    elif 406 <= freq_mhz <= 430: tx = 37
+    elif 440 <= freq_mhz <= 470: tx = 37
+    elif 162 <= freq_mhz <= 174: tx = 37
+    elif 156 <= freq_mhz <= 162: tx = 25
+    elif 1087 <= freq_mhz <= 1095: tx = 27
+    elif 1574 <= freq_mhz <= 1577: tx = 10
+    elif 1227 <= freq_mhz <= 1228: tx = 10
+    elif 169 <= freq_mhz <= 170: tx = 27
+    elif 868 <= freq_mhz <= 870: tx = 27
+    elif 500 <= freq_mhz <= 530: tx = 30
+    elif 900 <= freq_mhz <= 930: tx = 30
+    elif 1880 <= freq_mhz <= 1900: tx = 23
     elif 5725 <= freq_mhz <= 5875: tx = 14
-    elif 900 <= freq_mhz <= 928:  tx = 14
     elif 1080 <= freq_mhz <= 1300: tx = 14
     elif 420 <= freq_mhz <= 430:  tx = 20
-    else: tx = 25
+    elif 315 <= freq_mhz <= 320:  tx = 10
+    elif 433 <= freq_mhz <= 435:  tx = 10
+    else: tx = 27
     fspl = tx - rx_dbm
     fspl = max(20, min(160, fspl))
     d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
