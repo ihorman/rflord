@@ -3,7 +3,9 @@
 import json
 import threading
 import time
-from flask import Flask, Response
+import os
+import sqlite3
+from flask import Flask, Response, jsonify
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -60,6 +62,7 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .panel-header .count { font-size: 0.8em; opacity: 0.7; }
   .panel.sus .panel-header { background: #3a0a0a; color: #ff6b6b; }
   .panel.known .panel-header { background: #0a3a0a; color: #6bff6b; }
+  .panel.spy .panel-header { background: #2a1a00; color: #ffa940; }
   table { width: 100%; border-collapse: collapse; }
   th {
     text-align: left;
@@ -91,6 +94,11 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
   .status-dot.live { background: #6bff6b; animation: pulse 1.5s infinite; }
   @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
   .scroll-wrap { max-height: calc(100vh - 130px); overflow-y: auto; }
+  .bottom-row { grid-column: 1 / -1; }
+  .timestamp { color: #666; font-size: 0.8em; }
+  .threat-0 { color: #ff4444; }
+  .threat-1 { color: #ff8844; }
+  .threat-2 { color: #ffcc44; }
 </style>
 </head>
 <body>
@@ -127,6 +135,17 @@ DASHBOARD_HTML = r"""<!DOCTYPE html>
       </table>
     </div>
   </div>
+  <div class="panel spy bottom-row">
+    <div class="panel-header">
+      &#128274; Drone / Hidden Camera Events (30 days) <span class="count" id="spyCount">0</span>
+    </div>
+    <div class="scroll-wrap" style="max-height: 300px;">
+      <table>
+        <thead><tr><th>Time</th><th>Freq (MHz)</th><th>Threat</th><th>Device</th><th>Power</th><th>Dist</th><th>Details</th></tr></thead>
+        <tbody id="spyBody"><tr><td colspan="7" class="empty">No drone/camera events recorded</td></tr></tbody>
+      </table>
+    </div>
+  </div>
 </div>
 <script>
 function fmtFreq(f) { return (f / 1e6).toFixed(3); }
@@ -150,6 +169,28 @@ function renderRows(tbody, signals) {
   </tr>`).join('');
 }
 
+function renderSpyRows(events) {
+  const tbody = document.getElementById('spyBody');
+  if (!events || events.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="7" class="empty">No drone/camera events recorded</td></tr>';
+    return;
+  }
+  document.getElementById('spyCount').textContent = events.length;
+  tbody.innerHTML = events.map(e => {
+    const threatClass = 'threat-' + (e.threat_level != null ? e.threat_level : 3);
+    const threatLabel = ['CRITICAL','HIGH','MEDIUM','LOW'][e.threat_level] || '?';
+    return `<tr>
+      <td class="timestamp">${e.time || '—'}</td>
+      <td class="freq">${e.freq_mhz ? e.freq_mhz.toFixed(3) : '—'}</td>
+      <td class="${threatClass}">${threatLabel}</td>
+      <td class="type">${e.device_name || '—'}</td>
+      <td class="power">${fmtPower(e.peak_dbfs)}</td>
+      <td class="distance">${fmtDist(e.distance)}</td>
+      <td class="id">${e.details || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
 function update(data) {
   const signals = data.signals || [];
   const meta = data.metadata || {};
@@ -166,6 +207,13 @@ function update(data) {
   if (meta.alert_count != null) document.getElementById('alerts').textContent = meta.alert_count;
   else if (meta.alerts != null) document.getElementById('alerts').textContent = meta.alerts;
   document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString();
+}
+
+function loadSpyEvents() {
+  fetch('/api/spy?limit=100')
+    .then(r => r.json())
+    .then(data => renderSpyRows(data.events || []))
+    .catch(() => {});
 }
 
 function connectSSE() {
@@ -185,9 +233,80 @@ function connectSSE() {
 }
 
 connectSSE();
+loadSpyEvents();
+setInterval(loadSpyEvents, 60000);
 </script>
 </body>
 </html>"""
+
+
+class SpyEventDB:
+    """SQLite storage for drone/hidden camera detection events. 30-day retention."""
+
+    def __init__(self, db_path=None):
+        self.db_path = db_path or os.path.expanduser(
+            "~/.local/share/rflord/spy_events.db"
+        )
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self._conn = None
+
+    @property
+    def conn(self):
+        if self._conn is None:
+            self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+            self._conn.row_factory = sqlite3.Row
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        return self._conn
+
+    def init_db(self):
+        self.conn.executescript("""
+            CREATE TABLE IF NOT EXISTS spy_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp REAL NOT NULL,
+                freq_mhz REAL NOT NULL,
+                device_name TEXT,
+                threat_level INTEGER,
+                peak_dbfs REAL,
+                distance TEXT,
+                details TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_spy_ts ON spy_events(timestamp);
+            CREATE INDEX IF NOT EXISTS idx_spy_freq ON spy_events(freq_mhz);
+        """)
+        self.conn.commit()
+
+    def record_event(self, freq_mhz, device_name, threat_level,
+                     peak_dbfs=None, distance=None, details=None):
+        """Record a drone/camera detection event."""
+        self.conn.execute(
+            """INSERT INTO spy_events
+               (timestamp, freq_mhz, device_name, threat_level, peak_dbfs, distance, details)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (time.time(), freq_mhz, device_name, threat_level,
+             peak_dbfs, distance, details),
+        )
+        self.conn.commit()
+
+    def get_recent(self, limit=100, days=30):
+        """Get recent events within the last N days."""
+        cutoff = time.time() - days * 86400
+        rows = self.conn.execute(
+            """SELECT * FROM spy_events WHERE timestamp >= ?
+               ORDER BY timestamp DESC LIMIT ?""",
+            (cutoff, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def cleanup(self, max_days=30):
+        """Delete events older than max_days."""
+        cutoff = time.time() - max_days * 86400
+        self.conn.execute("DELETE FROM spy_events WHERE timestamp < ?", (cutoff,))
+        self.conn.commit()
+
+    def close(self):
+        if self._conn:
+            self._conn.close()
+            self._conn = None
 
 
 class WebDashboard:
@@ -198,11 +317,13 @@ class WebDashboard:
         self._signals: list[dict] = []
         self._metadata: dict = {}
         self._lock = threading.Lock()
-        self._sse_event = threading.Event()
+        self._version = 0
         self._thread: threading.Thread | None = None
         self._app = Flask(__name__)
         self._app.logger.setLevel("WARNING")
         self._running = False
+        self._spy_db = SpyEventDB()
+        self._spy_db.init_db()
         self._setup_routes()
 
     def _setup_routes(self):
@@ -217,34 +338,62 @@ class WebDashboard:
             with self._lock:
                 return {"signals": list(self._signals), "metadata": dict(self._metadata)}
 
+        @app.route("/api/spy")
+        def api_spy():
+            from flask import request
+            limit = request.args.get("limit", 100, type=int)
+            days = request.args.get("days", 30, type=int)
+            events = self._spy_db.get_recent(limit=limit, days=days)
+            # Convert timestamps to readable strings
+            for e in events:
+                if "timestamp" in e:
+                    e["time"] = time.strftime(
+                        "%Y-%m-%d %H:%M", time.localtime(e["timestamp"])
+                    )
+            return {"events": events}
+
         @app.route("/api/stream")
         def api_stream():
             def generate():
-                last_id = -1
+                last_version = 0
                 while True:
-                    self._sse_event.wait(timeout=5.0)
-                    self._sse_event.clear()
+                    time.sleep(2)
                     with self._lock:
-                        current_id = id(self._signals)
-                        data = json.dumps({
-                            "signals": list(self._signals),
-                            "metadata": dict(self._metadata),
-                        })
-                    if current_id != last_id:
-                        last_id = current_id
-                        yield f"data: {data}\n\n"
-                    else:
-                        yield ": keepalive\n\n"
+                        version = self._version
+                        if version != last_version:
+                            data = json.dumps({
+                                "signals": list(self._signals),
+                                "metadata": dict(self._metadata),
+                            })
+                            last_version = version
+                            yield f"data: {data}\n\n"
+                        else:
+                            yield ": keepalive\n\n"
 
-            return Response(generate(), mimetype="text/event-stream",
-                            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+            return Response(
+                generate(),
+                mimetype="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
 
     def update_signals(self, signals: list[dict], metadata: dict) -> None:
         """Called by the main curses loop each scan cycle."""
         with self._lock:
             self._signals = list(signals)
             self._metadata = dict(metadata)
-        self._sse_event.set()
+            self._version += 1
+
+    def record_spy_event(self, freq_mhz, device_name, threat_level,
+                         peak_dbfs=None, distance=None, details=None):
+        """Record a drone/camera detection event to persistent storage."""
+        self._spy_db.record_event(
+            freq_mhz, device_name, threat_level,
+            peak_dbfs, distance, details,
+        )
+
+    def cleanup_spy_events(self, max_days=30):
+        """Remove spy events older than max_days."""
+        self._spy_db.cleanup(max_days)
 
     def start(self) -> None:
         """Run Flask in a daemon background thread."""
@@ -264,4 +413,3 @@ class WebDashboard:
     def stop(self) -> None:
         """Signal the server to stop (daemon thread dies with the process)."""
         self._running = False
-        self._sse_event.set()  # unblock any waiting SSE

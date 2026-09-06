@@ -2087,8 +2087,24 @@ def main_curses(stdscr, devices):
         return assignment
 
     first_scan_done = False
+    _hackrf_workers = []  # Background threads that use HackRF (voice/camera capture)
+
+    def _wait_hackrf_workers(timeout=15):
+        """Wait for background HackRF workers to finish before next scan."""
+        while _hackrf_workers:
+            t = _hackrf_workers[0]
+            if t.is_alive():
+                t.join(timeout=timeout)
+                if t.is_alive():
+                    log.warning(f"HACKRF WORKER: {t.name} still alive after {timeout}s, abandoning")
+            _hackrf_workers.pop(0)
+
     while True:
       try:
+        # Wait for voice/camera workers to release HackRF before scanning
+        if has_hackrf and _hackrf_workers:
+            _wait_hackrf_workers(timeout=10)
+
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
 
@@ -2270,6 +2286,9 @@ def main_curses(stdscr, devices):
         if scan_num % 10 == 0:
             cleanup_old_decoded()
             cleanup_old_logs()
+            # Cleanup old spy events (30-day retention)
+            if web_dash:
+                web_dash.cleanup_spy_events(max_days=30)
         
         # Camera screenshot: capture for ALL detected hidden camera/FPV signals
         # with cooldown to avoid capturing same frequency too often
@@ -2297,13 +2316,24 @@ def main_curses(stdscr, devices):
                     spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                     label = spy_name or get_signal_type(f, 0, 0, s['std'], artemis_db)
                     log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing screenshot")
+                    # Record spy event to persistent storage
+                    if web_dash:
+                        web_dash.record_spy_event(
+                            freq_mhz=f, device_name=label,
+                            threat_level=threat if threat is not None else 1,
+                            peak_dbfs=s['peak'],
+                            distance=est_distance(f, s['peak']),
+                            details=f"Camera/FPV signal detected (std={s['std']:.1f})",
+                        )
                     screenshot = try_fpv_decode(f)
                     if screenshot:
                         log.warning(f"HIDDEN CAMERA: screenshot saved {screenshot}")
                     else:
                         log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
-            threading.Thread(target=_camera_worker, args=(camera_signals,),
-                             daemon=True, name="rflord-camera").start()
+            cam_thread = threading.Thread(target=_camera_worker, args=(camera_signals,),
+                             daemon=True, name="rflord-camera")
+            cam_thread.start()
+            _hackrf_workers.append(cam_thread)
         
         # CRITICAL ALERT: FPV drone, camera, military at close range
         if not hasattr(main_curses, '_last_critical'):
@@ -2327,16 +2357,67 @@ def main_curses(stdscr, devices):
                         speak(alert_msg)
                     # Auto-screenshot for FPV/camera
                     if is_camera_signal(f, s['std'], sig_type):
+                        # Record spy event for critical camera signal
+                        if web_dash:
+                            spy_name_c, _, threat_c = identify_spy_device(f, s['std'])
+                            web_dash.record_spy_event(
+                                freq_mhz=f, device_name=spy_name_c or reason,
+                                threat_level=0,  # Critical
+                                peak_dbfs=s['peak'],
+                                distance=est_distance(f, s['peak']),
+                                details=f"CRITICAL: {reason}",
+                            )
                         def _crit_cam_worker(freq):
                             screenshot = try_fpv_decode(freq)
                             if screenshot:
                                 log.warning(f"CRITICAL: screenshot saved {screenshot}")
-                        threading.Thread(target=_crit_cam_worker, args=(f,), daemon=True, name="rflord-crit-cam").start()
+                        crit_thread = threading.Thread(target=_crit_cam_worker, args=(f,), daemon=True, name="rflord-crit-cam")
+                        crit_thread.start()
+                        _hackrf_workers.append(crit_thread)
+                    else:
+                        # Record non-camera critical events (drone control, military)
+                        if web_dash:
+                            spy_name_d, _, threat_d = identify_spy_device(f, s['std'])
+                            if spy_name_d or "drone" in reason.lower() or "military" in reason.lower():
+                                web_dash.record_spy_event(
+                                    freq_mhz=f, device_name=spy_name_d or reason,
+                                    threat_level=0,  # Critical
+                                    peak_dbfs=s['peak'],
+                                    distance=est_distance(f, s['peak']),
+                                    details=f"CRITICAL: {reason}",
+                                )
         
         # Voice signal auto-capture: detect and play voice radio signals
         if not hasattr(main_curses, '_last_voice'):
             main_curses._last_voice = {}
         VOICE_COOLDOWN = 60  # seconds between captures of same frequency
+
+        # Record spy events for ALL suspicious signals matching spy device database
+        if web_dash and not hasattr(main_curses, '_last_spy_event'):
+            main_curses._last_spy_event = {}
+        SPY_EVENT_COOLDOWN = 300  # 5 min between events for same frequency
+        if web_dash:
+            for s in unique:
+                f = s['freq'] / 1e6
+                cls = classify(f, s['peak'], s['std'])
+                if cls not in ('sus', 'danger'):
+                    continue
+                spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                if spy_name is None:
+                    continue
+                freq_key = round(f)
+                last_evt = main_curses._last_spy_event.get(freq_key, 0)
+                if now_ts - last_evt < SPY_EVENT_COOLDOWN:
+                    continue
+                main_curses._last_spy_event[freq_key] = now_ts
+                web_dash.record_spy_event(
+                    freq_mhz=f, device_name=spy_name,
+                    threat_level=threat if threat is not None else 2,
+                    peak_dbfs=s['peak'],
+                    distance=est_distance(f, s['peak']),
+                    details=f"Suspicious signal (std={s['std']:.1f}, {cls})",
+                )
+                log.info(f"SPY EVENT: {spy_name} at {f:.1f} MHz (threat={threat})")
         
         all_voice_signals = [s for s in unique
                              if is_voice_signal(s['freq']/1e6, s['std'],
@@ -2358,8 +2439,10 @@ def main_curses(stdscr, devices):
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     log.info(f"VOICE SIGNAL: {sig_type} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing audio")
                     play_voice_sample(f)
-            threading.Thread(target=_voice_capture_worker, args=(voice_signals,),
-                             daemon=True, name="rflord-voice-auto").start()
+            voice_thread = threading.Thread(target=_voice_capture_worker, args=(voice_signals,),
+                             daemon=True, name="rflord-voice-auto")
+            voice_thread.start()
+            _hackrf_workers.append(voice_thread)
         
         # Voice alert
         if new_suspicious and voice_enabled:
@@ -2416,7 +2499,9 @@ def main_curses(stdscr, devices):
                                 play_voice_sample(f)
                                 vr = "analog voice sample, saved to decoded folder"
                                 break
-                threading.Thread(target=_voice_worker, daemon=True, name="rflord-voice").start()
+                vw_thread = threading.Thread(target=_voice_worker, daemon=True, name="rflord-voice")
+                vw_thread.start()
+                _hackrf_workers.append(vw_thread)
                 
                 count = len(above_threshold)
                 if count == 1:
