@@ -487,11 +487,15 @@ def classify(f, power, std):
 def est_distance(freq_mhz, power_dbfs):
     """Estimate distance from signal power using FSPL model.
 
-    HackRF with -l 32 -g 40 -a 1 = 83 dB total gain.
-    hackrf_sweep output is in dBFS relative to ADC full scale.
-    Calibrated: WiFi AP 100mW at 10m reads ~-50 dBFS → SDR_GAIN ≈ 10.
+    HackRF with -l 32 -g 40 -a 1 calibration:
+    Noise floor ≈ -70 dBFS ≈ -100 dBm
+    Full scale ≈ 0 dBFS ≈ -30 dBm
+    So: rx_dbm ≈ power_dbfs - 30
     """
-    SDR_GAIN = 10
+    # HackRF calibration: -l 32 -g 40 -a 1
+    # Noise floor ≈ -70 dBFS ≈ -100 dBm, full scale ≈ 0 dBFS ≈ -30 dBm
+    # So rx_dbm ≈ rx_power_dbfs - 30
+    SDR_GAIN = 30
     rx_dbm = power_dbfs - SDR_GAIN
 
     # Estimated transmit power (dBm) — realistic for typical sources
@@ -536,7 +540,7 @@ def est_distance(freq_mhz, power_dbfs):
 
 def est_distance_m(freq_mhz, power_dbfs):
     """Return distance in meters as a number (for sorting)."""
-    SDR_GAIN = 10
+    SDR_GAIN = 30
     rx_dbm = power_dbfs - SDR_GAIN
     if 88 <= freq_mhz <= 108:    tx = 60
     elif 174 <= freq_mhz <= 230: tx = 40

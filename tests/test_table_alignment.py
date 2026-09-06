@@ -75,7 +75,9 @@ class TestClassify:
         assert classify(350, -60, 5) == "ok"
 
     def test_unknown_strong_sus(self):
-        assert classify(350, -10, 5) == "sus"
+        # 350 MHz is military band — at -10 dBFS, distance is ~1 km (ok)
+        # 1500 MHz unknown band, -19 dBFS → ~80m → suspicious
+        assert classify(1500, -19, 5) == "sus"
 
 
 class TestGetBand:
