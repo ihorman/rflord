@@ -489,8 +489,6 @@ def est_distance(freq_mhz, power_dbfs):
 
     HackRF with -l 32 -g 40 -a 1 = 83 dB total gain.
     hackrf_sweep output is in dBFS relative to ADC full scale.
-    With83 dB gain,0 dBFS at ADC = -83 dBm at antenna.
-    But hackrf_sweep partially normalizes, so effective offset is different.
     Calibrated: WiFi AP 100mW at 10m reads ~-50 dBFS → SDR_GAIN ≈ 10.
     """
     SDR_GAIN = 10
@@ -508,10 +506,18 @@ def est_distance(freq_mhz, power_dbfs):
     elif 430 <= freq_mhz <= 470: tx = 30    # PMR / UHF handheld (1W)
     elif 2400 <= freq_mhz <= 2500: tx = 20  # WiFi / Bluetooth (100mW)
     elif 5150 <= freq_mhz <= 5900: tx = 23  # WiFi 5 GHz (200mW)
+    # Military bands — high power transmitters
+    elif 30 <= freq_mhz <= 88:   tx = 40    # Military VHF (10W handheld, 50W vehicle)
+    elif 225 <= freq_mhz <= 400: tx = 43    # Military UHF airband (20W aircraft)
+    elif 1300 <= freq_mhz <= 1400: tx = 37  # L-band military/radar (5W)
+    elif 2700 <= freq_mhz <= 3500: tx = 37  # S-band military/radar (5W)
+    elif 5250 <= freq_mhz <= 5850: tx = 37  # C-band radar (5W)
+    # Surveillance / spy devices — low power
     elif 5725 <= freq_mhz <= 5875: tx = 14  # FPV / spy camera (25mW)
     elif 900 <= freq_mhz <= 928:  tx = 14   # Spy camera 900 MHz (25mW)
     elif 1080 <= freq_mhz <= 1300: tx = 14  # Spy camera 1.2 GHz (25mW)
-    else: tx = 20                            # Default: 100 mW
+    elif 420 <= freq_mhz <= 430:  tx = 20   # ISM/surveillance (100mW)
+    else: tx = 25                            # Default: ~300 mW
 
     # Free-space path loss from link budget
     fspl = tx - rx_dbm  # dB
@@ -543,10 +549,16 @@ def est_distance_m(freq_mhz, power_dbfs):
     elif 430 <= freq_mhz <= 470: tx = 30
     elif 2400 <= freq_mhz <= 2500: tx = 20
     elif 5150 <= freq_mhz <= 5900: tx = 23
+    elif 30 <= freq_mhz <= 88:   tx = 40
+    elif 225 <= freq_mhz <= 400: tx = 43
+    elif 1300 <= freq_mhz <= 1400: tx = 37
+    elif 2700 <= freq_mhz <= 3500: tx = 37
+    elif 5250 <= freq_mhz <= 5850: tx = 37
     elif 5725 <= freq_mhz <= 5875: tx = 14
     elif 900 <= freq_mhz <= 928:  tx = 14
     elif 1080 <= freq_mhz <= 1300: tx = 14
-    else: tx = 20
+    elif 420 <= freq_mhz <= 430:  tx = 20
+    else: tx = 25
     fspl = tx - rx_dbm
     fspl = max(20, min(160, fspl))
     d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)

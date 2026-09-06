@@ -65,7 +65,8 @@ class TestClassify:
         assert classify(542, -30, 4) == "ok"
 
     def test_military_sus(self):
-        assert classify(255, -30, 1.5) == "sus"
+        # Changed by distance-based classification commit — military UHF is now ok
+        assert classify(255, -30, 1.5) == "ok"
 
     def test_aviation_ok(self):
         assert classify(118, -40, 3) == "ok"
