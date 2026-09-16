@@ -690,6 +690,26 @@ def speak_distance(dist_str):
         return dist_str.replace('m', ' meters')
     return dist_str
 
+def distance_reliable(freq_mhz):
+    """Return True if distance estimate is reliable for this frequency.
+    
+    Bands with known, stable tx power (broadcast, cellular infrastructure)
+    give reliable distance. Bands with variable/unknown tx power (military,
+    ISM, surveillance) do NOT.
+    """
+    # Reliable: infrastructure transmitters with known power
+    if 88 <= freq_mhz <= 108: return True    # FM broadcast
+    if 174 <= freq_mhz <= 230: return True   # DVB-T/DAB
+    if 470 <= freq_mhz <= 860: return True   # DVB-T2/ISDB-T/TV
+    if 791 <= freq_mhz <= 960: return True   # GSM/LTE base
+    if 1800 <= freq_mhz <= 1880: return True  # GSM1800
+    if 1920 <= freq_mhz <= 2170: return True  # 3G/UMTS
+    if 2620 <= freq_mhz <= 2690: return True  # LTE2600
+    if 1574 <= freq_mhz <= 1577: return True  # GPS
+    if 1087 <= freq_mhz <= 1095: return True  # ADS-B
+    # Unreliable: variable tx power
+    return False
+
 def estimate_noise_floor(signals):
     """Estimate noise floor using 10th percentile of signal powers.
     From sec0ps/rf_surveillance — dynamic noise floor adapts to environment."""
@@ -2546,24 +2566,26 @@ def main_curses(stdscr, devices):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    # Only announce distance for bands with reliable tx power
+                    dist_str = f", about {speak_distance(dist)}" if distance_reliable(f) else ""
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
                     else:
                         artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                         if artemis_entry:
                             name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
+                            announcements.append(f"{f:.0f} megahertz, identified as {name}{dist_str}")
                         else:
                             spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                             if spy_name:
-                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
                             else:
-                                announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                                announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
                 
                 # Voice decode + play in background thread (blocks 15+ seconds)
                 def _voice_worker():
@@ -3017,24 +3039,26 @@ def main_ansi(devices=None):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    # Only announce distance for bands with reliable tx power
+                    dist_str = f", about {speak_distance(dist)}" if distance_reliable(f) else ""
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                            announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
                     else:
                         artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                         if artemis_entry:
                             name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{f:.0f} megahertz, identified as {name}, about {speak_distance(dist)}")
+                            announcements.append(f"{f:.0f} megahertz, identified as {name}{dist_str}")
                         else:
                             spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                             if spy_name:
-                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz, about {speak_distance(dist)}")
+                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
                             else:
-                                announcements.append(f"{f:.0f} megahertz, {sig_type}, about {speak_distance(dist)}")
+                                announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:
