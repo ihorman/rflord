@@ -3,6 +3,17 @@
 # threat_level: 0=critical, 1=high, 2=medium, 3=low
 
 SPY_DEVICES = [
+    # Smoke detectors (wireless alarm transmitters) — wartime: booby trap indicators
+    (433.80, 434.05, "Wireless Smoke Detector", "🔥", 0),
+    (314.5, 315.5, "Wireless Smoke Detector 315", "🔥", 0),
+    (344.5, 345.5, "Wireless Smoke Detector 345", "🔥", 0),
+    (868.5, 869.0, "Wireless Smoke Detector 868", "🔥", 0),
+    (869.2, 869.3, "Wireless Smoke Detector 869", "🔥", 0),
+
+    # Laser/IR perimeter beam alarms — wartime: tripwire/booby trap indicators
+    (433.5, 434.5, "Laser Perimeter Alarm", "🔴", 0),
+    (868.0, 870.0, "IR Perimeter Beam 868", "🔴", 0),
+
     # Hidden cameras — analog video transmitters
     (900, 928, "Hidden Camera 900MHz", "📹", 0),
     (1080, 1200, "Hidden Camera 1.2GHz", "📹", 0),

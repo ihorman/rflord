@@ -7430,6 +7430,60 @@
       "category": "Remote Control",
       "manufacturer": null,
       "source": "rc_switch"
+    },
+    {
+      "name": "Wireless Smoke Detector",
+      "frequency": 433920000,
+      "category": "Safety",
+      "modulation": "FSK",
+      "description": "Wireless smoke alarm transmitter. In wartime: possible booby trap or IED trigger indicator.",
+      "bandwidth": 50000,
+      "data_rate": 9600
+    },
+    {
+      "name": "Wireless Smoke Detector 315",
+      "frequency": 315000000,
+      "category": "Safety",
+      "modulation": "FSK",
+      "description": "Wireless smoke alarm transmitter (US band). In wartime: possible booby trap indicator.",
+      "bandwidth": 50000,
+      "data_rate": 9600
+    },
+    {
+      "name": "Wireless Smoke Detector 345",
+      "frequency": 345000000,
+      "category": "Safety",
+      "modulation": "FSK",
+      "description": "Wireless smoke alarm transmitter (Honeywell/Ademco band). In wartime: possible booby trap indicator.",
+      "bandwidth": 50000,
+      "data_rate": 9600
+    },
+    {
+      "name": "Laser Perimeter Alarm",
+      "frequency": 433920000,
+      "category": "Security",
+      "modulation": "FSK+FHSS",
+      "description": "Laser/IR beam perimeter intrusion detector. In wartime: tripwire alarm, booby trap, or defensive perimeter indicator.",
+      "bandwidth": 50000,
+      "data_rate": 9600
+    },
+    {
+      "name": "IR Perimeter Beam 868",
+      "frequency": 868950000,
+      "category": "Security",
+      "modulation": "FSK",
+      "description": "Active infrared beam perimeter detector (EU band). In wartime: tripwire or perimeter defense indicator.",
+      "bandwidth": 100000,
+      "data_rate": 9600
+    },
+    {
+      "name": "Wireless Smoke Detector 868",
+      "frequency": 868950000,
+      "category": "Safety",
+      "modulation": "FSK",
+      "description": "Wireless smoke alarm transmitter (EU band). In wartime: possible booby trap indicator.",
+      "bandwidth": 50000,
+      "data_rate": 9600
     }
   ]
 }
