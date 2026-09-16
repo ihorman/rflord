@@ -775,35 +775,66 @@ def _generate_noise(path, duration_s=10, rate=2000000):
 
 def _suppress_start():
     """Start transmitting noise on selected frequencies."""
-    global _suppress_procs
+    global _suppress_procs, _suppress_active
     _suppress_stop()  # Kill any existing
+
+    # Always regenerate noise file to avoid stale/corrupt data
     noise = '/tmp/rflord_noise.bin'
-    if not os.path.exists(noise):
+    try:
         _generate_noise(noise, duration_s=60)
+    except Exception as e:
+        log.error(f"SUPPRESS: Failed to generate noise file: {e}")
+        _suppress_active = False
+        return
+
+    started = 0
     for name, active in _suppress_targets.items():
         if not active:
             continue
-        info = SUPPRESS_TARGETS[name]
+        info = SUPPRESS_TARGETS.get(name)
+        if not info:
+            log.warning(f"SUPPRESS: Unknown target '{name}', skipping")
+            continue
         for freq in info['freqs']:
+            # Validate HackRF TX range (0-6 GHz)
+            if freq < 0 or freq > 6e9:
+                log.warning(f"SUPPRESS: freq {freq} Hz out of HackRF TX range, skipping")
+                continue
             cmd = ["hackrf_transfer", "-t", noise, "-f", str(int(freq)),
                    "-s", "2000000", "-a", "1", "-x", "40", "-n", "120000000"]
             try:
-                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
                 _suppress_procs.append(p)
-            except:
-                pass
+                started += 1
+                log.info(f"SUPPRESS: TX on {freq/1e6:.1f} MHz (PID {p.pid})")
+            except FileNotFoundError:
+                log.error("SUPPRESS: hackrf_transfer not found in PATH")
+                _suppress_active = False
+                return
+            except Exception as e:
+                log.error(f"SUPPRESS: Failed to start TX on {freq/1e6:.1f} MHz: {e}")
+
+    if started == 0:
+        log.warning("SUPPRESS: No transmitters started")
+        _suppress_active = False
+    else:
+        log.info(f"SUPPRESS: {started} transmitter(s) active")
 
 def _suppress_stop():
     """Stop all suppress transmissions."""
-    global _suppress_procs
+    global _suppress_procs, _suppress_active
     for p in _suppress_procs:
         try:
             p.terminate()
             p.wait(timeout=2)
-        except:
+        except subprocess.TimeoutExpired:
+            try: p.kill()
+            except: pass
+        except Exception:
             try: p.kill()
             except: pass
     _suppress_procs = []
+    _suppress_active = False
 
 def _show_suppress_menu(stdscr):
     """Show suppress target selection popup. Returns True if changed."""
@@ -2144,6 +2175,11 @@ def main_curses(stdscr, devices):
         if has_hackrf and _hackrf_workers:
             _wait_hackrf_workers(timeout=10)
 
+        # Pause suppress during scan (hackrf_transfer conflicts with hackrf_sweep)
+        suppress_was_active = _suppress_active
+        if suppress_was_active:
+            _suppress_stop()
+
         scan_num += 1
         log.info(f"=== Scan #{scan_num} started ===")
 
@@ -2311,6 +2347,11 @@ def main_curses(stdscr, devices):
         if not first_scan_done:
             stdscr.clear()
             stdscr.refresh()
+        # Restart suppress after scan completes (paused during sweep)
+        if suppress_was_active and has_hackrf:
+            _suppress_active = True
+            _suppress_start()
+
         draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
         
         # Update splash status after first scan
@@ -2594,11 +2635,9 @@ def main_curses(stdscr, devices):
                 _show_suppress_menu(stdscr)
                 any_active = any(_suppress_targets.get(n, False) for n in SUPPRESS_TARGETS)
                 if any_active and has_hackrf:
-                    _suppress_active = True
-                    _suppress_start()
+                    _suppress_start()  # Sets _suppress_active=True on success
                 else:
-                    _suppress_active = False
-                    _suppress_stop()
+                    _suppress_stop()   # Sets _suppress_active=False
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'perimeter':
                 if not has_hackrf:
