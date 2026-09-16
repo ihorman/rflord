@@ -405,7 +405,10 @@ class WebDashboard:
         log.setLevel(logging.ERROR)
 
         def run():
-            self._app.run(host="0.0.0.0", port=self.port, threaded=True, use_reloader=False)
+            import io, contextlib
+            # Suppress Flask startup banner (* Serving Flask app, * Debug mode)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                self._app.run(host="0.0.0.0", port=self.port, threaded=True, use_reloader=False)
 
         self._thread = threading.Thread(target=run, daemon=True, name="rflord-web")
         self._thread.start()

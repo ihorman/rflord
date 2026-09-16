@@ -1730,20 +1730,25 @@ def draw_splash(stdscr, device, status_lines=None):
     stdscr.erase()
     h, w = stdscr.getmaxyx()
     
-    lines = [
-        "",
-        "  ██████╗  ███████╗██╗      ██████╗ ██████╗ ██████╗ ",
-        "  ██╔══██╗██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗",
-        "  ██████╔╝█████╗  ██║     ██║   ██║██████╔╝██║  ██║",
-        "  ██╔══██╗██╔══╝  ██║     ██║   ██║██╔══██╗██║  ██║",
-        "  ██║  ██║██║    ███████╗╚██████╔╝██║  ██║██████╔╝",
-        "  ╚═╝  ╚═╝╚═╝    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ",
-        "",
-        f"  RF SPECTRUM MONITOR  {VERSION}",
-        f"  Author: Ihor Kolodyuk",
-        "",
-        f"  Device: {device.upper() if device else 'NOT FOUND'}",
-    ]
+    # ASCII art only fits in wide terminals
+    if w >= 60:
+        lines = [
+            "",
+            "  ██████╗  ███████╗██╗      ██████╗ ██████╗ ██████╗ ",
+            "  ██╔══██╗██╔════╝██║     ██╔═══██╗██╔══██╗██╔══██╗",
+            "  ██████╔╝█████╗  ██║     ██║   ██║██████╔╝██║  ██║",
+            "  ██╔══██╗██╔══╝  ██║     ██║   ██║██╔══██╗██║  ██║",
+            "  ██║  ██║██║    ███████╗╚██████╔╝██║  ██║██████╔╝",
+            "  ╚═╝  ╚═╝╚═╝    ╚══════╝ ╚═════╝ ╚═╝  ╚═╝╚═════╝ ",
+            "",
+        ]
+    else:
+        lines = [""]
+    
+    lines.append(f"  RF SPECTRUM MONITOR  {VERSION}")
+    lines.append(f"  Author: Ihor Kolodyuk")
+    lines.append("")
+    lines.append(f"  Device: {device.upper() if device else 'NOT FOUND'}")
     
     if status_lines:
         lines.append("")
@@ -1758,26 +1763,29 @@ def draw_splash(stdscr, device, status_lines=None):
         row = start_row + i
         if row >= h - 1:
             break
+        # Truncate line to fit terminal width
+        display = line[:w-1]
         try:
-            if "████" in line:
+            if "████" in display:
                 color = CP_SUS_RED
-                stdscr.addstr(row, max(0, (w - len(line)) // 2), line, curses.color_pair(color) | curses.A_BOLD)
-            elif ": OK" in line:
+                col = max(0, (w - len(display)) // 2)
+                stdscr.addstr(row, col, display, curses.color_pair(color) | curses.A_BOLD)
+            elif ": OK" in display:
                 color = CP_OK
-                col = max(0, (w - len(line)) // 2)
-                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
-            elif "in progress" in line:
+                col = max(0, (w - len(display)) // 2)
+                stdscr.addstr(row, col, display, curses.color_pair(color))
+            elif "in progress" in display:
                 color = CP_SUS_RED
-                col = max(0, (w - len(line)) // 2)
-                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
-            elif "SPECTRUM" in line:
+                col = max(0, (w - len(display)) // 2)
+                stdscr.addstr(row, col, display, curses.color_pair(color) | curses.A_BOLD)
+            elif "SPECTRUM" in display:
                 color = CP_HEADER
-                col = max(0, (w - len(line)) // 2)
-                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color) | curses.A_BOLD)
+                col = max(0, (w - len(display)) // 2)
+                stdscr.addstr(row, col, display, curses.color_pair(color) | curses.A_BOLD)
             else:
                 color = CP_DIM
-                col = max(0, (w - len(line)) // 2)
-                stdscr.addstr(row, col, line[:w-1-col], curses.color_pair(color))
+                col = max(0, (w - len(display)) // 2)
+                stdscr.addstr(row, col, display, curses.color_pair(color))
         except:
             pass
     
