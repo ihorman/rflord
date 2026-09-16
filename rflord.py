@@ -818,6 +818,7 @@ def _suppress_start():
         log.warning("SUPPRESS: No transmitters started")
         _suppress_active = False
     else:
+        _suppress_active = True
         log.info(f"SUPPRESS: {started} transmitter(s) active")
 
 def _suppress_stop():
@@ -1948,7 +1949,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     stdscr.refresh()
 
 def main_curses(stdscr, devices):
-    global INTERVAL, VOICE_THRESHOLD, _cursor_pos
+    global INTERVAL, VOICE_THRESHOLD, _cursor_pos, _suppress_active
     if isinstance(devices, str):
         devices = [devices]  # Backward compat
     device = devices[0]  # Primary device
@@ -2828,6 +2829,7 @@ def main():
         sys.exit(1)
     device = devices[0]  # Primary device for backward compat
     print(f"SDR devices: {', '.join(devices)}", flush=True)
+    print()  # Blank line before curses takes over terminal
 
     # Set ESCDELAY for faster escape sequence handling (default is 1000ms!)
     os.environ['ESCDELAY'] = '0'
