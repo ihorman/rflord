@@ -21,6 +21,32 @@
     return d.innerHTML;
   }
 
+  /* Signal strength: 1-10 scale from power (dBFS)
+     -10 dBFS = 10 (max), -60 dBFS = 1 (min)
+     Gradient: 1=yellow (#ffd166) → 10=red (#ff4444) */
+  function calcStrength(power) {
+    if (power == null) return 0;
+    var s = Math.round((power + 60) / 5);  // -60→0, -10→10
+    return Math.max(1, Math.min(10, s));
+  }
+  function strengthColor(s) {
+    // 1=yellow #ffd166, 10=red #ff4444, interpolate
+    var t = (s - 1) / 9;  // 0..1
+    var r = Math.round(255 * (0.8 + 0.2 * t));
+    var g = Math.round(255 * (0.82 * (1 - t) + 0.27 * t));
+    var b = Math.round(255 * (0.4 * (1 - t) + 0.27 * t));
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+  function renderStrengthGauge(power) {
+    var s = calcStrength(power);
+    var pct = s * 10;
+    var color = strengthColor(s);
+    return '<div class="strength-gauge">' +
+      '<div class="strength-bar"><div class="strength-fill" style="width:' + pct + '%;background:' + color + '"></div></div>' +
+      '<span class="strength-val" style="color:' + color + '">' + s + '</span>' +
+      '</div>';
+  }
+
   /* ---- State ---- */
   var sseSource = null;
   var retryTimer = null;
@@ -331,7 +357,7 @@
   /* ---- Rendering ---- */
   function renderRows(tbody, signals, category) {
     if (!signals || signals.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" class="empty-msg">No ' + category + ' signals</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-msg">No ' + category + ' signals</td></tr>';
       return;
     }
     tbody.innerHTML = signals.map(function (s) {
@@ -345,6 +371,7 @@
         '<td class="count">' + (s.count > 1 ? 'x' + s.count : '') + '</td>' +
         '<td class="freq">' + fmtFreq(s.freq) + '</td>' +
         '<td class="power">' + fmtPower(s.power) + '</td>' +
+        '<td>' + renderStrengthGauge(s.power) + '</td>' +
         '<td class="std">' + fmtStd(s.std) + '</td>' +
         '<td class="distance">' + fmtDist(s.distance) + '</td>' +
         '<td class="type">' + esc(s.type || '\u2014') + '</td>' +

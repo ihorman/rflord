@@ -160,7 +160,7 @@ header {
 /* ---- CONTAINER ---- */
 .container {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 1fr;
   gap: 8px;
   padding: 8px;
   max-width: 1800px;
@@ -357,6 +357,33 @@ tr.row-ok td { background: transparent; }
 .power { color: var(--gold); }
 .std { color: #b8b8b8; }
 .distance { color: var(--lavender); }
+
+/* Signal strength gauge — 1-10 gradient yellow→red */
+.strength-gauge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 80px;
+}
+.strength-bar {
+  height: 8px;
+  border-radius: 2px;
+  flex: 1;
+  background: #2a2a2a;
+  position: relative;
+  overflow: hidden;
+}
+.strength-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.3s;
+}
+.strength-val {
+  font-size: 0.8em;
+  font-weight: 700;
+  min-width: 16px;
+  text-align: right;
+}
 .type { color: var(--peach); }
 .id {
   color: var(--text);
@@ -636,8 +663,8 @@ footer .footer-stat b {
   }
 
   /* Hide less important columns on narrow screens */
-  th:nth-child(4), td:nth-child(4), /* Std */
-  th:nth-child(6), td:nth-child(6)  /* Type */
+  th:nth-child(5), td:nth-child(5), /* Std */
+  th:nth-child(7), td:nth-child(7)  /* Type */
   {
     display: none;
   }
