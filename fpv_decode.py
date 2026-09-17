@@ -112,6 +112,20 @@ def capture_iq_hackrf(freq_mhz, duration_s, sample_rate=10000000):
     iq = raw[::2].astype(np.float32)/128 + 1j*raw[1::2].astype(np.float32)/128
     
     print("Captured %d samples (%.1f ms)" % (len(iq), len(iq)/sample_rate*1000))
+    
+    # Save IQ alongside screenshots for later redecoding
+    try:
+        import time as _time
+        ts = _time.strftime("%Y%m%d_%H%M%S")
+        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
+        iq_dir = os.path.expanduser('~/.flord/iq_samples')
+        os.makedirs(iq_dir, exist_ok=True)
+        iq_path = os.path.join(iq_dir, f"{ts}_{freq_label}MHz.iq")
+        raw.tofile(iq_path)
+        print("Saved IQ sample: %s" % iq_path)
+    except Exception as e:
+        print("Could not save IQ: %s" % e)
+    
     return iq, sample_rate
 
 def load_iq_file(path, sample_rate=10000000):
@@ -254,12 +268,51 @@ def extract_frame(video, h_sync_positions, sample_rate, tv_std):
     return frame
 
 def normalize_frame(frame):
-    """Normalize frame to0-255 uint8"""
+    """Normalize frame to 0-255 uint8"""
     frame = frame - np.min(frame)
     max_val = np.max(frame)
     if max_val > 0:
         frame = frame / max_val * 255
     return np.clip(frame, 0, 255).astype(np.uint8)
+
+
+def has_video_signal(iq, sample_rate):
+    """Check if IQ data contains an analog video signal by looking for
+    spectral peaks at the NTSC/PAL line rate harmonics.
+    Returns True if video content detected, False otherwise."""
+    from scipy.signal import welch
+    
+    # FM demod a short segment
+    n = min(len(iq), int(sample_rate * 0.1))  # 100ms max
+    seg = iq[:n]
+    phase = np.angle(seg)
+    unwrapped = np.unwrap(phase)
+    video = np.diff(unwrapped) * sample_rate / (2 * np.pi)
+    
+    # Power spectrum
+    f, psd = welch(video, fs=sample_rate, nperseg=min(4096, len(video)))
+    psd_db = 10 * np.log10(psd + 1e-20)
+    
+    # Check for peaks at line rate harmonics (15734 Hz NTSC / 15625 Hz PAL)
+    # and their harmonics (2x, 3x, 4x)
+    for line_rate in [15734, 15625]:
+        harmonic_powers = []
+        for h in [1, 2, 3, 4]:
+            target = line_rate * h
+            idx = np.argmin(np.abs(f - target))
+            # Check if there's a peak (power significantly above local noise)
+            lo = max(0, idx - 20)
+            hi = min(len(psd_db), idx + 20)
+            local_noise = np.median(psd_db[max(0, lo-50):lo]) if lo > 50 else np.median(psd_db)
+            peak_power = psd_db[idx]
+            harmonic_powers.append(peak_power - local_noise)
+        
+        # If at least 3 of 4 harmonics are >6 dB above local noise, it's video
+        strong = sum(1 for p in harmonic_powers if p > 6)
+        if strong >= 3:
+            return True
+    
+    return False
 
 # ============================================================
 #  SPECTROGRAM
@@ -365,6 +418,19 @@ def main():
         spec_path = args.output.replace('.png', '_spectrogram.png')
         spec_img.save(spec_path)
         print("Saved spectrogram: %s" % spec_path)
+    
+    # Check if there's actually a video signal before trying to decode
+    print("\nChecking for video signal...")
+    if not has_video_signal(iq, sample_rate):
+        print("NO VIDEO SIGNAL DETECTED — skipping decode")
+        print("Saving spectrogram instead...")
+        spec_img = create_spectrogram(iq, sample_rate)
+        spec_img.save(args.output.replace('.png', '_no_video.png'))
+        print("Saved: %s" % args.output.replace('.png', '_no_video.png'))
+        # Exit with error code so caller knows no video was found
+        sys.exit(2)
+    
+    print("Video signal detected — decoding...")
     
     # FM demodulate
     print("\nFM demodulating...")
