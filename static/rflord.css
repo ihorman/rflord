@@ -1,9 +1,9 @@
 /* RFLord Dashboard — Dark Theme */
 :root {
-  --bg: #1a1a2e;
-  --panel: #16213e;
-  --border: #0f3460;
-  --border-light: #0d1b3e;
+  --bg: #1a1a1a;
+  --panel: #1e1e1e;
+  --border: #333;
+  --border-light: #2a2a2a;
   --text: #eee;
   --text-dim: #aaa;
   --text-muted: #888;
@@ -19,12 +19,12 @@
   --gold: #ffd166;
   --lavender: #c9b1ff;
   --peach: #ff9e7a;
-  --spy-bg: #2a1a00;
+  --spy-bg: #2a1a0a;
   --spy: #ffa940;
   --modal-overlay: rgba(0,0,0,0.65);
   --tap-target: 31px;
   --radius: 7px;
-  --header-bg: #0f1629;
+  --header-bg: #141414;
 }
 
 *, *::before, *::after {
@@ -154,7 +154,7 @@ header {
   border-radius: 4px;
   border: 1px solid var(--border);
   display: block;
-  background: #0a0a1a;
+  background: #111;
 }
 
 /* ---- CONTAINER ---- */
@@ -213,7 +213,7 @@ header {
 
 /* ---- AUDIO PANEL ---- */
 .panel.audio-panel .panel-header {
-  background: #1a1035;
+  background: #1a1a1a;
   color: var(--lavender);
 }
 
@@ -275,7 +275,7 @@ header {
   align-items: center;
   gap: 8px;
   padding: 6px 8px;
-  background: #12102a;
+  background: #161616;
   border-top: 1px solid var(--border);
 }
 
@@ -697,7 +697,7 @@ button, a, tr {
 }
 
 .scroll-wrap::-webkit-scrollbar-thumb:hover {
-  background: #1a3a6e;
+  background: #444;
 }
 
 .audio-list::-webkit-scrollbar {
