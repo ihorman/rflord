@@ -464,11 +464,14 @@ class WebDashboard:
             )
 
     def update_signals(self, signals: list[dict], metadata: dict) -> None:
-        """Called by the main curses loop each scan cycle."""
+        """Called by the main curses loop each scan cycle.
+        Only replaces data if new scan has signals — prevents empty tables."""
         with self._lock:
-            self._signals = list(signals)
-            self._metadata = dict(metadata)
-            self._version += 1
+            if signals:  # Only update if we have real data
+                self._signals = list(signals)
+                self._metadata = dict(metadata)
+                self._version += 1
+            # If signals is empty, keep last good data — don't clear tables
 
     def record_spy_event(self, freq_mhz, device_name, threat_level,
                          peak_dbfs=None, distance=None, details=None):

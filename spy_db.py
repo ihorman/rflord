@@ -196,7 +196,46 @@ def identify_spy_device(freq_mhz, std):
     """Check if frequency matches known spy device.
     Camera/FPV bands only flagged if std < 2 (continuous carrier).
     Bursty signals (std > 3) in those bands are cellular/digital, not cameras.
+    Satellite frequencies are excluded — they're not spy devices.
     """
+    # Satellite exclusion — these are navigation signals, not spy devices
+    _sat_ranges = [
+        (1574, 1577),  # GPS L1, Galileo E1, GLONASS
+        (1227, 1228),  # GPS L2
+        (1176, 1177),  # GPS L5
+        (1600, 1606),  # GLONASS L1
+        (1242, 1252),  # GLONASS L2
+        (1559, 1563),  # BeiDou B1
+        (1207, 1210),  # BeiDou B2
+        (1268, 1269),  # BeiDou B3
+        (1191, 1192),  # Galileo E5
+        (1616, 1627),  # Iridium
+        (1525, 1559),  # Inmarsat
+        (1087, 1095),  # ADS-B
+    ]
+    for sat_lo, sat_hi in _sat_ranges:
+        if sat_lo <= freq_mhz <= sat_hi:
+            return None, None, None  # Satellite — not a spy device
+
+    # Known legitimate bands — never spy devices
+    _legit_ranges = [
+        (88, 108),     # FM broadcast
+        (174, 230),    # DAB/DVB-T
+        (470, 862),    # DVB-T2/TV
+        (880, 960),    # GSM900
+        (1805, 1880),  # GSM1800
+        (1920, 2170),  # 3G/LTE
+        (2300, 2500),  # WiFi 2.4GHz (narrower — don't exclude 2.5GHz drone control)
+        (5150, 5875),  # WiFi 5GHz
+        (108, 137),    # Air band
+        (144, 148),    # 2m ham
+        # NOTE: 430-470 and 868-870 NOT excluded — smoke detectors, laser
+        # perimeter alarms, and other security devices operate there
+    ]
+    for legit_lo, legit_hi in _legit_ranges:
+        if legit_lo <= freq_mhz <= legit_hi:
+            return None, None, None  # Known legitimate — not a spy device
+
     for lo, hi, name, icon, threat in SPY_DEVICES:
         if lo <= freq_mhz <= hi:
             # Camera/FPV bands: only flag if continuous carrier (std < 2)

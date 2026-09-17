@@ -454,7 +454,8 @@ def classify(f, power, std):
     if 470 <= f <= 790: return "ok"    # DVB-T
     if 108 <= f <= 137: return "ok"   # Air band
     if 1089 <= f <= 1091: return "ok"  # ADS-B
-    if 1574 <= f <= 1576: return "ok"  # GPS
+    if 1574 <= f <= 1576: return "ok"  # GPS L1
+    if is_satellite_signal(f): return "ok"  # All satellites (GPS L2/L5, GLONASS, BeiDou, Galileo, Iridium, Inmarsat, ADS-B)
     if 144 <= f <= 148: return "ok"    # 2m ham
     if 430 <= f <= 470: return "ok"    # 70cm/PMR
     if 446 <= f <= 447: return "ok"    # PMR446
@@ -487,6 +488,30 @@ def classify(f, power, std):
     if power > -20: return "sus"
     return "ok"
 
+def is_satellite_signal(freq_mhz):
+    """Check if frequency is a satellite navigation signal (distance meaningless)."""
+    # GPS L1/L2/L5
+    if 1574 <= freq_mhz <= 1577: return True
+    if 1227 <= freq_mhz <= 1228: return True
+    if 1176 <= freq_mhz <= 1177: return True
+    # GLONASS L1/L2
+    if 1600 <= freq_mhz <= 1606: return True
+    if 1242 <= freq_mhz <= 1252: return True
+    # BeiDou B1/B2/B3
+    if 1559 <= freq_mhz <= 1563: return True
+    if 1207 <= freq_mhz <= 1210: return True
+    if 1268 <= freq_mhz <= 1269: return True
+    # Galileo E1/E5
+    if 1574 <= freq_mhz <= 1577: return True
+    if 1191 <= freq_mhz <= 1192: return True
+    # Iridium
+    if 1616 <= freq_mhz <= 1627: return True
+    # Inmarsat
+    if 1525 <= freq_mhz <= 1559: return True
+    # ADS-B (aircraft transponder — altitude-based, not ground distance)
+    if 1087 <= freq_mhz <= 1095: return True
+    return False
+
 def est_distance(freq_mhz, power_dbfs):
     """Estimate distance from signal power using FSPL model.
 
@@ -495,6 +520,9 @@ def est_distance(freq_mhz, power_dbfs):
     Full scale ≈ 0 dBFS ≈ -30 dBm
     So: rx_dbm ≈ power_dbfs - 30
     """
+    # Satellite signals — distance is meaningless (20,200 km orbit)
+    if is_satellite_signal(freq_mhz):
+        return "Satellite"
     # HackRF calibration: -l 32 -g 40 -a 1
     # Noise floor ≈ -70 dBFS ≈ -100 dBm, full scale ≈ 0 dBFS ≈ -30 dBm
     # So rx_dbm ≈ rx_power_dbfs - 30
@@ -565,6 +593,8 @@ def est_distance(freq_mhz, power_dbfs):
 
 def est_distance_m(freq_mhz, power_dbfs):
     """Return distance in meters as a number (for sorting)."""
+    if is_satellite_signal(freq_mhz):
+        return 999999  # Satellite — distance meaningless, sort to end
     SDR_GAIN = 30
     rx_dbm = power_dbfs - SDR_GAIN
     if 88 <= freq_mhz <= 108:    tx = 60
@@ -1421,13 +1451,35 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     """Identify signal type using heuristic approach.
     
     Priority:
-    1. rf_protocols DB (specific protocol matches)
-    2. Known frequency bands (WiFi, GSM, aviation, etc.)
-    3. Signatures DB (non-surveillance entries only)
-    4. Signal characteristics (narrowband + strong = suspicious)
+    0. Satellite signals (GPS, GLONASS, BeiDou, Galileo) — never misidentify
+    1. Spy device database (FPV, cameras, smoke detectors)
+    2. rf_protocols DB (specific protocol matches)
+    3. Known frequency bands (WiFi, GSM, aviation, etc.)
+    4. Signatures DB (non-surveillance entries only)
     """
     
-    # === STEP 1: Check rf_protocols for specific matches ===
+    # === STEP 0: Satellite signals — highest priority ===
+    if is_satellite_signal(freq_mhz):
+        if 1574 <= freq_mhz <= 1577: return "GPS L1"
+        if 1227 <= freq_mhz <= 1228: return "GPS L2"
+        if 1176 <= freq_mhz <= 1177: return "GPS L5"
+        if 1600 <= freq_mhz <= 1606: return "GLONASS L1"
+        if 1242 <= freq_mhz <= 1252: return "GLONASS L2"
+        if 1559 <= freq_mhz <= 1563: return "BeiDou B1"
+        if 1207 <= freq_mhz <= 1210: return "BeiDou B2"
+        if 1268 <= freq_mhz <= 1269: return "BeiDou B3"
+        if 1191 <= freq_mhz <= 1192: return "Galileo E5"
+        if 1616 <= freq_mhz <= 1627: return "Iridium"
+        if 1525 <= freq_mhz <= 1559: return "Inmarsat"
+        if 1087 <= freq_mhz <= 1095: return "ADS-B"
+        return "Satellite"
+
+    # === STEP 1: Spy device database — deterministic ===
+    spy_name, spy_icon, spy_threat = identify_spy_device(freq_mhz, std)
+    if spy_name:
+        return f"{spy_icon} {spy_name}"
+    
+    # === STEP 2: Check rf_protocols for specific matches ===
     try:
         from rf_protocols import identify_by_freq
         protos = identify_by_freq(freq_mhz, tolerance_mhz=0.5)
