@@ -337,19 +337,47 @@ class WebDashboard:
 
     def _setup_routes(self):
         app = self._app
+        from functools import wraps
+        from flask import request as flask_request
+
+        # Basic auth credentials (temporary — change in production)
+        WEB_USER = os.environ.get('RFLORD_WEB_USER', 'xxx')
+        WEB_PASS = os.environ.get('RFLORD_WEB_PASS', 'xxx')
+
+        def check_auth(username, password):
+            return username == WEB_USER and password == WEB_PASS
+
+        def authenticate():
+            return Response(
+                'Authentication required',
+                401,
+                {'WWW-Authenticate': 'Basic realm="RFLord"'}
+            )
+
+        def requires_auth(f):
+            @wraps(f)
+            def decorated(*args, **kwargs):
+                auth = flask_request.authorization
+                if not auth or not check_auth(auth.username, auth.password):
+                    return authenticate()
+                return f(*args, **kwargs)
+            return decorated
 
         @app.route("/")
+        @requires_auth
         def index():
             if self._has_templates:
                 return render_template("index.html")
             return Response(DASHBOARD_HTML, content_type="text/html")
 
         @app.route("/api/signals")
+        @requires_auth
         def api_signals():
             with self._lock:
                 return {"signals": list(self._signals), "metadata": dict(self._metadata)}
 
         @app.route("/api/spy")
+        @requires_auth
         def api_spy():
             from flask import request
             limit = request.args.get("limit", 100, type=int)
@@ -364,6 +392,7 @@ class WebDashboard:
             return {"events": events}
 
         @app.route("/api/stream")
+        @requires_auth
         def api_stream():
             def generate():
                 last_version = 0
