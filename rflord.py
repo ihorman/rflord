@@ -503,7 +503,8 @@ def est_distance(freq_mhz, power_dbfs):
     elif 174 <= freq_mhz <= 230: tx = 50    # DVB-T / DAB tower (100W)
     elif 470 <= freq_mhz <= 790: tx = 57    # DVB-T2 tower (500W) — Ukraine
     elif 470 <= freq_mhz <= 860: tx = 57    # ISDB-T / analog TV tower (500W)
-    elif 800 <= freq_mhz <= 960: tx = 43    # GSM base station (20W)
+    elif 800 <= freq_mhz <= 890: tx = 43    # GSM800/LTE base station (20W)
+    elif 935 <= freq_mhz <= 960: tx = 43    # GSM900 base station downlink (20W)
     elif 1805 <= freq_mhz <= 1880: tx = 43  # GSM1800 base station (20W)
     elif 1920 <= freq_mhz <= 1980: tx = 43  # 3G UMTS uplink
     elif 2110 <= freq_mhz <= 2170: tx = 43  # 3G/LTE base station (20W)
@@ -567,7 +568,8 @@ def est_distance_m(freq_mhz, power_dbfs):
     elif 174 <= freq_mhz <= 230: tx = 50
     elif 470 <= freq_mhz <= 790: tx = 57
     elif 470 <= freq_mhz <= 860: tx = 57
-    elif 800 <= freq_mhz <= 960: tx = 43
+    elif 800 <= freq_mhz <= 890: tx = 43
+    elif 935 <= freq_mhz <= 960: tx = 43
     elif 1805 <= freq_mhz <= 1880: tx = 43
     elif 1920 <= freq_mhz <= 1980: tx = 43
     elif 2110 <= freq_mhz <= 2170: tx = 43
@@ -701,7 +703,8 @@ def distance_reliable(freq_mhz):
     if 88 <= freq_mhz <= 108: return True    # FM broadcast
     if 174 <= freq_mhz <= 230: return True   # DVB-T/DAB
     if 470 <= freq_mhz <= 860: return True   # DVB-T2/ISDB-T/TV
-    if 791 <= freq_mhz <= 960: return True   # GSM/LTE base
+    if 791 <= freq_mhz <= 862: return True   # LTE800 base
+    if 935 <= freq_mhz <= 960: return True   # GSM900 downlink (cell tower)
     if 1800 <= freq_mhz <= 1880: return True  # GSM1800
     if 1920 <= freq_mhz <= 2170: return True  # 3G/UMTS
     if 2620 <= freq_mhz <= 2690: return True  # LTE2600
@@ -2334,9 +2337,16 @@ def main_curses(stdscr, devices):
                     known_freqs[rm.rule_name] = time.time()
                     alert_count += 1
             # Voice alert for threats (threaded — non-blocking)
+            # Only voice-alert if at least one suspicious signal is within 100m
             voice_msg = rule_engine.format_voice_alert(assessment)
             if voice_msg and voice_enabled:
-                speak(voice_msg)
+                any_close = any(est_distance_m(s['freq']/1e6, s['peak']) <= 100
+                               for s in unique
+                               if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger'))
+                if any_close:
+                    speak(voice_msg)
+                else:
+                    log.info(f"Rule engine voice skip: no signals within 100m")
 
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
@@ -2457,9 +2467,13 @@ def main_curses(stdscr, devices):
                 freq_key = round(f)
                 last = main_curses._last_critical.get(freq_key, 0)
                 if now_ts - last > CRITICAL_COOLDOWN:
-                    main_curses._last_critical[freq_key] = now_ts
                     dist = est_distance(f, s['peak'])
-                    # HAL9000 voice alert
+                    dist_m = est_distance_m(f, s['peak'])
+                    # Only voice-alert if within 100m
+                    if dist_m > 100:
+                        continue
+                    main_curses._last_critical[freq_key] = now_ts
+                    # HAL9000 voice alert with distance
                     alert_msg = f"Warning. {reason} detected at {f:.0f} megahertz. Distance {dist}. Threat level critical."
                     log.warning(f"CRITICAL ALERT: {reason} at {f:.1f} MHz, {dist}")
                     if voice_enabled:
@@ -2553,7 +2567,7 @@ def main_curses(stdscr, devices):
             voice_thread.start()
             _hackrf_workers.append(voice_thread)
         
-        # Voice alert
+        # Voice alert — ONLY if signal is within 100m
         if new_suspicious and voice_enabled:
             log.info(f"Voice alert: {len(new_suspicious)} new suspicious, threshold={VOICE_THRESHOLD}")
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
@@ -2565,9 +2579,13 @@ def main_curses(stdscr, devices):
                 for s in above_threshold[:4]:
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
+                    dist_m = est_distance_m(f, s['peak'])
+                    # Only voice-alert if within 100m
+                    if dist_m > 100:
+                        log.info(f"Voice skip: {f:.1f} MHz at {dist} (>100m)")
+                        continue
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    # Only announce distance for bands with reliable tx power
-                    dist_str = f", about {speak_distance(dist)}" if distance_reliable(f) else ""
+                    dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
@@ -3029,7 +3047,7 @@ def main_ansi(devices=None):
             cleanup_old_decoded()
             cleanup_old_logs()
         
-        # Voice alert (same as curses version)
+        # Voice alert — ONLY if signal is within 100m
         if new_suspicious:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
@@ -3038,9 +3056,12 @@ def main_ansi(devices=None):
                 for s in above_threshold[:4]:
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
+                    dist_m = est_distance_m(f, s['peak'])
+                    # Only voice-alert if within 100m
+                    if dist_m > 100:
+                        continue
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    # Only announce distance for bands with reliable tx power
-                    dist_str = f", about {speak_distance(dist)}" if distance_reliable(f) else ""
+                    dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
