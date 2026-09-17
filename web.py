@@ -240,6 +240,37 @@ setInterval(loadSpyEvents, 60000);
 </html>"""
 
 
+AUDIO_DIR = os.path.expanduser("~/.local/share/rflord/audio_samples")
+
+
+def _list_audio_files():
+    """Return list of decoded voice sample files with metadata."""
+    if not os.path.isdir(AUDIO_DIR):
+        return []
+    files = []
+    for name in sorted(os.listdir(AUDIO_DIR)):
+        path = os.path.join(AUDIO_DIR, name)
+        if not os.path.isfile(path):
+            continue
+        ext = os.path.splitext(name)[1].lower()
+        if ext not in ('.wav', '.mp3', '.ogg', '.flac', '.m4a', '.opus'):
+            continue
+        size = os.path.getsize(path)
+        # Estimate duration from file size for WAV (~16kHz 16-bit mono)
+        duration = ''
+        if ext == '.wav' and size > 44:
+            samples = (size - 44) / 2  # 16-bit = 2 bytes/sample
+            secs = int(samples / 16000)
+            if secs > 0:
+                duration = '%d:%02d' % (secs // 60, secs % 60)
+        files.append({
+            'name': name,
+            'size': size,
+            'duration': duration,
+        })
+    return files
+
+
 class SpyEventDB:
     """SQLite storage for drone/hidden camera detection events. 30-day retention."""
 
@@ -390,6 +421,22 @@ class WebDashboard:
                         "%Y-%m-%d %H:%M", time.localtime(e["timestamp"])
                     )
             return {"events": events}
+
+        @app.route("/api/audio")
+        @requires_auth
+        def api_audio_list():
+            return {"files": _list_audio_files()}
+
+        @app.route("/api/audio/<path:filename>")
+        @requires_auth
+        def api_audio_file(filename):
+            from flask import send_from_directory, abort
+            # Security: prevent path traversal
+            if '..' in filename or '/' in filename:
+                abort(404)
+            if not os.path.isdir(AUDIO_DIR):
+                abort(404)
+            return send_from_directory(AUDIO_DIR, filename)
 
         @app.route("/api/stream")
         @requires_auth

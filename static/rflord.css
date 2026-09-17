@@ -132,6 +132,31 @@ header {
   font-weight: 700;
 }
 
+/* ---- WATERFALL ---- */
+.waterfall-wrap {
+  background: var(--header-bg);
+  padding: 4px 12px 6px;
+  border-bottom: 1px solid var(--border);
+  position: relative;
+}
+
+.waterfall-label {
+  font-size: 0.68em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 3px;
+}
+
+#waterfallCanvas {
+  width: 100%;
+  height: 80px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  display: block;
+  background: #0a0a1a;
+}
+
 /* ---- CONTAINER ---- */
 .container {
   display: grid;
@@ -184,6 +209,90 @@ header {
 .panel.spy .panel-header {
   background: var(--spy-bg);
   color: var(--spy);
+}
+
+/* ---- AUDIO PANEL ---- */
+.panel.audio-panel .panel-header {
+  background: #1a1035;
+  color: var(--lavender);
+}
+
+.audio-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.audio-list {
+  overflow-y: auto;
+  flex: 1;
+  max-height: 160px;
+}
+
+.audio-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s;
+  font-size: 0.85em;
+}
+
+.audio-item:hover {
+  background: rgba(255,255,255,0.04);
+}
+
+.audio-item.playing {
+  background: rgba(201,177,255,0.1);
+}
+
+.audio-item-icon {
+  flex-shrink: 0;
+  font-size: 1em;
+  width: 18px;
+  text-align: center;
+}
+
+.audio-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: var(--text);
+}
+
+.audio-item-duration {
+  color: var(--text-muted);
+  font-size: 0.8em;
+  flex-shrink: 0;
+}
+
+.audio-player-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #12102a;
+  border-top: 1px solid var(--border);
+}
+
+.audio-now-playing {
+  font-size: 0.75em;
+  color: var(--lavender);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+  flex-shrink: 0;
+}
+
+.audio-player-bar audio {
+  flex: 1;
+  height: 26px;
+  min-width: 0;
 }
 
 /* ---- TABLE ---- */
@@ -393,6 +502,102 @@ footer .footer-stat b {
 .modal-value.power { color: var(--gold); }
 .modal-value.distance { color: var(--lavender); }
 
+/* ---- TOAST NOTIFICATIONS ---- */
+.toast-container {
+  position: fixed;
+  top: 44px;
+  right: 8px;
+  z-index: 2000;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  pointer-events: none;
+  max-width: 320px;
+}
+
+.toast {
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 0.82em;
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  pointer-events: auto;
+  animation: toastIn 0.3s ease-out;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  cursor: pointer;
+}
+
+.toast.toast-exit {
+  animation: toastOut 0.25s ease-in forwards;
+}
+
+.toast-icon {
+  font-size: 1.2em;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.toast-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-title {
+  font-weight: 700;
+  color: var(--danger);
+  font-size: 0.95em;
+  margin-bottom: 2px;
+}
+
+.toast-detail {
+  color: var(--text-dim);
+  font-size: 0.88em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toast-time {
+  color: var(--text-faint);
+  font-size: 0.75em;
+  flex-shrink: 0;
+  margin-left: 4px;
+  align-self: flex-start;
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(40px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+    max-height: 100px;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(40px);
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+    margin-bottom: 0;
+    border-width: 0;
+  }
+}
+
 /* ---- RESPONSIVE ---- */
 
 /* Tablet portrait — stacked panels */
@@ -445,6 +650,20 @@ footer .footer-stat b {
     max-height: 260px;
   }
 
+  .waterfall-wrap {
+    padding: 3px 8px 5px;
+  }
+
+  #waterfallCanvas {
+    height: 60px;
+  }
+
+  .toast-container {
+    max-width: 260px;
+    right: 4px;
+    top: 38px;
+  }
+
   footer {
     padding: 8px 12px;
     font-size: 0.72em;
@@ -479,4 +698,17 @@ button, a, tr {
 
 .scroll-wrap::-webkit-scrollbar-thumb:hover {
   background: #1a3a6e;
+}
+
+.audio-list::-webkit-scrollbar {
+  width: 5px;
+}
+
+.audio-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.audio-list::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
 }

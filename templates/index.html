@@ -23,6 +23,12 @@
   </div>
 </header>
 
+<!-- MINI SPECTRUM WATERFALL -->
+<div class="waterfall-wrap">
+  <div class="waterfall-label">Spectrum Waterfall</div>
+  <canvas id="waterfallCanvas" width="800" height="80"></canvas>
+</div>
+
 <!-- MAIN PANELS -->
 <div class="container">
 
@@ -60,6 +66,22 @@
     </div>
   </div>
 
+  <!-- Audio Player -->
+  <div class="panel audio-panel">
+    <div class="panel-header">
+      &#127908; Decoded Voice Samples <span class="count" id="audioCount">0</span>
+    </div>
+    <div class="audio-body">
+      <div id="audioList" class="audio-list">
+        <div class="empty-msg">No audio samples available</div>
+      </div>
+      <div id="audioPlayerBar" class="audio-player-bar" style="display:none;">
+        <span id="audioNowPlaying" class="audio-now-playing">&mdash;</span>
+        <audio id="audioElement" controls preload="none"></audio>
+      </div>
+    </div>
+  </div>
+
   <!-- Spy Events -->
   <div class="panel spy bottom-row">
     <div class="panel-header">
@@ -94,6 +116,9 @@
     <div id="modalBody"></div>
   </div>
 </div>
+
+<!-- TOAST CONTAINER -->
+<div id="toastContainer" class="toast-container"></div>
 
 <script src="/static/rflord.js"></script>
 </body>
