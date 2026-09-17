@@ -349,7 +349,11 @@ class WebDashboard:
         self._metadata: dict = {}
         self._lock = threading.Lock()
         self._version = 0
+        self._last_update_time: float = 0
         self._thread: threading.Thread | None = None
+        # Cache file for persisting last good data across restarts
+        self._cache_file = os.path.expanduser('~/.flord/web_cache.json')
+        self._load_cache()
         # Detect template/static dirs relative to web.py
         _dir = os.path.dirname(os.path.abspath(__file__))
         _tpl = os.path.join(_dir, 'templates')
@@ -471,7 +475,33 @@ class WebDashboard:
                 self._signals = list(signals)
                 self._metadata = dict(metadata)
                 self._version += 1
+                self._last_update_time = time.time()
+                self._save_cache()
             # If signals is empty, keep last good data — don't clear tables
+
+    def _load_cache(self):
+        """Load last good signals from disk cache on startup."""
+        try:
+            if os.path.exists(self._cache_file):
+                with open(self._cache_file) as f:
+                    cache = json.load(f)
+                self._signals = cache.get('signals', [])
+                self._metadata = cache.get('metadata', {})
+                if self._signals:
+                    self._version = 1
+                    self._last_update_time = cache.get('time', 0)
+                    log.info(f"Loaded {len(self._signals)} cached signals from {self._cache_file}")
+        except Exception as e:
+            log.debug(f"Cache load failed: {e}")
+
+    def _save_cache(self):
+        """Save current signals to disk cache for persistence across restarts."""
+        try:
+            os.makedirs(os.path.dirname(self._cache_file), exist_ok=True)
+            with open(self._cache_file, 'w') as f:
+                json.dump({'signals': self._signals, 'metadata': self._metadata, 'time': self._last_update_time}, f)
+        except Exception as e:
+            log.debug(f"Cache save failed: {e}")
 
     def record_spy_event(self, freq_mhz, device_name, threat_level,
                          peak_dbfs=None, distance=None, details=None):
