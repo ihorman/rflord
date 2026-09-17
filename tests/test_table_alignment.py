@@ -65,14 +65,17 @@ class TestClassify:
         assert classify(542, -30, 4) == "ok"
 
     def test_military_sus(self):
-        # Changed by distance-based classification commit — military UHF is now ok
-        assert classify(255, -30, 1.5) == "ok"
+        # Military (225-400 MHz) is always sus in wartime
+        assert classify(255, -30, 1.5) == "sus"
 
     def test_aviation_ok(self):
         assert classify(118, -40, 3) == "ok"
 
     def test_unknown_below_threshold_ok(self):
-        assert classify(350, -60, 5) == "ok"
+        # 350 MHz is military range (225-400) → always sus
+        assert classify(350, -60, 5) == "sus"
+        # Non-military far away signal → ok
+        assert classify(1800, -60, 5) == "ok"
 
     def test_unknown_strong_sus(self):
         # 350 MHz is military band — at -10 dBFS, distance is ~1 km (ok)

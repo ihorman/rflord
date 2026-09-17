@@ -28,11 +28,6 @@ SPY_DEVICES = [
     (1080, 1300, "FPV Video TX 1.2GHz", "🎯", 1),
 
     # GPS trackers
-    (1575, 1576, "GPS L1 Tracker", "📍", 1),
-    (1227, 1228, "GPS L2 Tracker", "📍", 1),
-    (1176, 1177, "GPS L5 Tracker", "📍", 1),
-    (1575, 1576, "GLONASS L1 Tracker", "📍", 1),
-    (1602, 1609, "GLONASS L1 Tracker", "📍", 1),
 
     # GSM/LTE IMSI catchers (StingRay, cell-site simulators)
     (935, 960, "GSM IMSI Catcher", "📡", 0),
@@ -45,11 +40,6 @@ SPY_DEVICES = [
     (3400, 3800, "5G NR IMSI Catcher", "📡", 0),
 
     # Audio bugs / wiretaps
-    (35, 45, "VHF Audio Bug", "🎙", 0),
-    (72, 76, "VHF Audio Bug", "🎙", 0),
-    (150, 174, "VHF Audio Bug", "🎙", 0),
-    (400, 470, "UHF Audio Bug", "🎙", 0),
-    (2400, 2483, "2.4GHz Audio Bug", "🎙", 0),
     (88, 108, "FM Band Bug", "🎙", 0),
     (108, 137, "Air Band Bug", "🎙", 0),
 

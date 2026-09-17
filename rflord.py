@@ -319,16 +319,11 @@ def group_signals_by_type(signals, artemis_db=None):
     groups = {}
     for s in signals:
         f = s['freq'] / 1e6
+        # get_signal_type() now has correct priority: satellite > spy_db > rf_protos > heuristic
         sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-        # Use Artemis name as group key if available, skip for military UHF
-        if 225 <= f <= 400:
-            art = None
-        else:
-            art = identify_signal(f, artemis_db) if artemis_db else None
-        key = art['name'] if art else sig_type
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(s)
+        if sig_type not in groups:
+            groups[sig_type] = []
+        groups[sig_type].append(s)
     
     result = []
     for key, sigs in groups.items():
@@ -359,15 +354,10 @@ def group_suspicious(signals, artemis_db=None):
     for s in signals:
         f = s['freq'] / 1e6
         sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-        # Skip Artemis for military UHF band
-        if 225 <= f <= 400:
-            art = None
-        else:
-            art = identify_signal(f, artemis_db) if artemis_db else None
-        key = art['name'] if art else sig_type
-        if key not in groups:
-            groups[key] = []
-        groups[key].append(s)
+        # Use get_signal_type() as group key — it has correct priority chain
+        if sig_type not in groups:
+            groups[sig_type] = []
+        groups[sig_type].append(s)
     
     result = []
     for key, sigs in groups.items():
@@ -466,11 +456,9 @@ def classify(f, power, std):
     if 400 <= f <= 470: return "ok"    # UHF TV
     if 510 <= f <= 610: return "ok"    # UHF TV
     
-    # Military — ok only if far away, suspicious if close
+    # Military — always suspicious in wartime
     if 225 <= f <= 400:
-        dist_m = est_distance_m(f, power)
-        if dist_m < 100: return "sus"
-        return "ok"
+        return "sus"
     
     # === UNKNOWN SIGNAL — use distance heuristic ===
     dist_m = est_distance_m(f, power)
