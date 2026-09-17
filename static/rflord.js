@@ -34,9 +34,11 @@
     }
     tbody.innerHTML = signals.map(function (s) {
       var rowClass = '';
-      if (category === 'suspicious') {
-        rowClass = s.count > 3 ? 'row-danger' : 'row-sus';
-      }
+      if (s.classify === 'danger') rowClass = 'row-danger';
+      else if (s.classify === 'sus') rowClass = 'row-sus';
+      else if (category === 'suspicious') rowClass = 'row-sus';
+      var icon = s.icon || '';
+      var idText = icon ? icon + ' ' + (s.identification || '') : (s.identification || '\u2014');
       return '<tr class="' + rowClass + '" data-signal="' + esc(JSON.stringify(s)) + '">' +
         '<td class="count">' + (s.count > 1 ? 'x' + s.count : '') + '</td>' +
         '<td class="freq">' + fmtFreq(s.freq) + '</td>' +
@@ -44,7 +46,7 @@
         '<td class="std">' + fmtStd(s.std) + '</td>' +
         '<td class="distance">' + fmtDist(s.distance) + '</td>' +
         '<td class="type">' + esc(s.type || '\u2014') + '</td>' +
-        '<td class="id" title="' + esc(s.identification || '') + '">' + esc(s.identification || '\u2014') + '</td>' +
+        '<td class="id" title="' + esc(s.identification || '') + '">' + esc(idText) + '</td>' +
         '</tr>';
     }).join('');
   }

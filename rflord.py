@@ -2323,13 +2323,37 @@ def main_curses(stdscr, devices):
                              key=lambda x: x["peak"], reverse=True)
             sus_grouped = group_suspicious(sus_list, artemis_db)
             ok_grouped = group_signals_by_type(ok_list, artemis_db)
-            # Format for web JS: {freq, power, std, distance, type, identification, count, band, category}
-            web_sus = [{'freq': g['freq'] * 1e6, 'power': g['peak'], 'std': g['std'],
-                        'distance': g['dist'], 'type': g['type'], 'identification': g.get('remark', ''),
-                        'count': g['count'], 'category': 'suspicious'} for g in sus_grouped]
-            web_ok = [{'freq': g['freq'] * 1e6, 'power': g['peak'], 'std': g['std'],
-                       'distance': g['dist'], 'type': g['type'], 'identification': g.get('remark', ''),
-                       'count': g['count'], 'band': g.get('band', '?'), 'category': 'known'} for g in ok_grouped]
+            # Format for web JS: {freq, power, std, distance, type, identification, count, band, category, icon, classify}
+            web_sus = []
+            for g in sus_grouped:
+                f = g['freq']
+                spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
+                cls = classify(f, g['peak'], g.get('std', 0))
+                identification = g.get('remark', '')
+                if spy_name:
+                    identification = f"{spy_icon} {spy_name}" + (f" — {identification}" if identification else "")
+                web_sus.append({
+                    'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
+                    'distance': g['dist'], 'type': g['type'],
+                    'identification': identification,
+                    'count': g['count'], 'category': 'suspicious',
+                    'icon': spy_icon or '', 'classify': cls,
+                })
+            web_ok = []
+            for g in ok_grouped:
+                f = g['freq']
+                spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
+                cls = classify(f, g['peak'], g.get('std', 0))
+                identification = g.get('remark', '')
+                if spy_name:
+                    identification = f"{spy_icon} {spy_name}" + (f" — {identification}" if identification else "")
+                web_ok.append({
+                    'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
+                    'distance': g['dist'], 'type': g['type'],
+                    'identification': identification,
+                    'count': g['count'], 'band': g.get('band', '?'), 'category': 'known',
+                    'icon': spy_icon or '', 'classify': cls,
+                })
             web_dash.update_signals(web_sus + web_ok, {
                 'version': VERSION, 'alerts': alert_count, 'device': device,
                 'sus_count': len(sus_grouped), 'ok_count': len(ok_grouped),
@@ -2532,7 +2556,7 @@ def main_curses(stdscr, devices):
             main_curses._last_voice = {}
         VOICE_COOLDOWN = 60  # seconds between captures of same frequency
 
-        # Record spy events for ALL suspicious signals matching spy device database
+        # Record events for ALL suspicious signals
         if web_dash and not hasattr(main_curses, '_last_spy_event'):
             main_curses._last_spy_event = {}
         SPY_EVENT_COOLDOWN = 300  # 5 min between events for same frequency
@@ -2543,16 +2567,17 @@ def main_curses(stdscr, devices):
                 if cls not in ('sus', 'danger'):
                     continue
                 spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                if spy_name is None:
-                    continue
+                # Use spy device name if available, otherwise use signal type
+                device_name = spy_name or get_signal_type(f, 0, 0, s['std'], artemis_db)
+                threat_level = threat if threat is not None else (0 if cls == 'danger' else 2)
                 freq_key = round(f)
                 last_evt = main_curses._last_spy_event.get(freq_key, 0)
                 if now_ts - last_evt < SPY_EVENT_COOLDOWN:
                     continue
                 main_curses._last_spy_event[freq_key] = now_ts
                 web_dash.record_spy_event(
-                    freq_mhz=f, device_name=spy_name,
-                    threat_level=threat if threat is not None else 2,
+                    freq_mhz=f, device_name=device_name,
+                    threat_level=threat_level,
                     peak_dbfs=s['peak'],
                     distance=est_distance(f, s['peak']),
                     details=f"Suspicious signal (std={s['std']:.1f}, {cls})",
