@@ -432,6 +432,7 @@ def classify(f, power, std):
     # === KNOWN LEGITIMATE SIGNALS — always ok ===
     if 2400 <= f <= 2500: return "ok"  # WiFi/BT
     if 5150 <= f <= 5875: return "ok"  # WiFi 5GHz
+    # === Always OK (digital/cellular/broadcast) ===
     if 925 <= f <= 960: return "ok"    # GSM
     if 1805 <= f <= 1880: return "ok"  # GSM1800
     if 1700 <= f <= 2000: return "ok"  # 3G/LTE
@@ -439,26 +440,26 @@ def classify(f, power, std):
     if 2300 <= f <= 2700: return "ok"  # LTE
     if 791 <= f <= 862: return "ok"    # LTE800
     if 2620 <= f <= 2690: return "ok"  # LTE2600
-    if 88 <= f <= 108: return "ok"     # FM radio
+    if 88 <= f <= 108: return "ok"     # FM radio broadcast (EXCEPTION — always ok)
     if 174 <= f <= 230: return "ok"    # DAB/DVB-T
     if 470 <= f <= 790: return "ok"    # DVB-T
-    if 108 <= f <= 137: return "ok"   # Air band
     if 1089 <= f <= 1091: return "ok"  # ADS-B
     if 1574 <= f <= 1576: return "ok"  # GPS L1
-    if is_satellite_signal(f): return "ok"  # All satellites (GPS L2/L5, GLONASS, BeiDou, Galileo, Iridium, Inmarsat, ADS-B)
-    if 144 <= f <= 148: return "ok"    # 2m ham
-    if 430 <= f <= 470: return "ok"    # 70cm/PMR
-    if 446 <= f <= 447: return "ok"    # PMR446
-    if 462 <= f <= 468: return "ok"    # FRS/GMRS
-    if 433 <= f <= 435: return "ok"    # ISM433
-    if 868 <= f <= 870: return "ok"    # ISM868
-    if 915 <= f <= 928: return "ok"    # ISM915
-    if 400 <= f <= 470: return "ok"    # UHF TV
-    if 510 <= f <= 610: return "ok"    # UHF TV
-    
-    # Military — always suspicious in wartime
-    if 225 <= f <= 400:
-        return "sus"
+    if is_satellite_signal(f): return "ok"  # All navigation satellites
+
+    # === Military — always suspicious in wartime ===
+    if 225 <= f <= 400: return "sus"
+
+    # === Radio with voice (std < 3) = suspicious ===
+    # Aviation, ham, PMR, ISM — if it has voice characteristics, it's suspicious
+    if 108 <= f <= 137 and std < 3: return "sus"   # Air band voice
+    if 144 <= f <= 148 and std < 3: return "sus"   # 2m ham voice
+    if 430 <= f <= 470 and std < 3: return "sus"   # 70cm/PMR voice
+    if 446 <= f <= 447 and std < 3: return "sus"   # PMR446 voice
+    if 462 <= f <= 468 and std < 3: return "sus"   # FRS/GMRS voice
+    if 433 <= f <= 435 and std < 3: return "sus"   # ISM433 voice
+    if 868 <= f <= 870 and std < 3: return "sus"   # ISM868 voice
+    if 915 <= f <= 928 and std < 3: return "sus"   # ISM915 voice
     
     # === UNKNOWN SIGNAL — use distance heuristic ===
     dist_m = est_distance_m(f, power)
@@ -1467,17 +1468,7 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if spy_name:
         return f"{spy_icon} {spy_name}"
     
-    # === STEP 2: Check rf_protocols for specific matches ===
-    try:
-        from rf_protocols import identify_by_freq
-        protos = identify_by_freq(freq_mhz, tolerance_mhz=0.5)
-        if protos:
-            name = protos[0].get('name', protos[0].get('protocol', ''))
-            if name:
-                return name[:20]
-    except: pass
-    
-    # === STEP 2: Known frequency bands ===
+    # === STEP 2: Known frequency bands FIRST (before rf_protocols device guesses) ===
     
     # Cellular
     if 935 <= freq_mhz <= 960: return "GSM900"
@@ -1493,12 +1484,9 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
             return f"WiFi Ch{ch}"
     if 2400 <= freq_mhz <= 2500: return "WiFi 2.4GHz"
     
-    # WiFi 5 GHz
+    # WiFi 5 GHz / 5.8GHz ISM
     if 5150 <= freq_mhz <= 5725: return "WiFi 5GHz"
-    if 5725 <= freq_mhz <= 5875:
-        if std < 2: return "FPV"
-        elif std < 3: return "FPV/WiFi"
-        else: return "WiFi 5GHz"
+    if 5725 <= freq_mhz <= 5875: return "5.8GHz ISM"
     
     # FM Radio
     if 88 <= freq_mhz <= 108: return "FM Radio"
@@ -1515,16 +1503,16 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if 1089 <= freq_mhz <= 1091: return "ADS-B"
     if 1574 <= freq_mhz <= 1576: return "GPS L1"
     
+    # ISM (before PMR — 433/868/915 are specific ISM bands within wider ranges)
+    if 433 <= freq_mhz <= 435: return "ISM433"
+    if 868 <= freq_mhz <= 870: return "ISM868"
+    if 915 <= freq_mhz <= 928: return "ISM915"
+    
     # Amateur/PMR
     if 144 <= freq_mhz <= 148: return "2m Ham"
     if 430 <= freq_mhz <= 470: return "70cm/PMR"
     if 446 <= freq_mhz <= 447: return "PMR446"
     if 462 <= freq_mhz <= 468: return "FRS/GMRS"
-    
-    # ISM
-    if 433 <= freq_mhz <= 435: return "ISM433"
-    if 868 <= freq_mhz <= 870: return "ISM868"
-    if 915 <= freq_mhz <= 928: return "ISM915"
     
     # Military
     if 225 <= freq_mhz <= 400: return "Mil UHF"
@@ -1544,7 +1532,17 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
                     return name[:20]
     except: pass
     
-    # === STEP 4: Unknown ===
+    # === STEP 4: rf_protocols (fallback — only if no band matched) ===
+    try:
+        from rf_protocols import identify_by_freq
+        protos = identify_by_freq(freq_mhz, tolerance_mhz=0.5)
+        if protos:
+            name = protos[0].get('name', protos[0].get('protocol', ''))
+            if name:
+                return name[:20]
+    except: pass
+    
+    # === STEP 5: Unknown ===
     if std < 2: return "CW/Carrier"
     return "Unknown"
 

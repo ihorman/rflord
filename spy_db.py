@@ -4,78 +4,33 @@
 
 SPY_DEVICES = [
     # Smoke detectors (wireless alarm transmitters) — wartime: booby trap indicators
-    (433.80, 434.05, "Wireless Smoke Detector", "🔥", 0),
-    (314.5, 315.5, "Wireless Smoke Detector 315", "🔥", 0),
-    (344.5, 345.5, "Wireless Smoke Detector 345", "🔥", 0),
-    (868.5, 869.0, "Wireless Smoke Detector 868", "🔥", 0),
-    (869.2, 869.3, "Wireless Smoke Detector 869", "🔥", 0),
 
     # Laser/IR perimeter beam alarms — wartime: tripwire/booby trap indicators
-    (433.5, 434.5, "Laser Perimeter Alarm", "🔴", 0),
-    (868.0, 870.0, "IR Perimeter Beam 868", "🔴", 0),
 
     # Hidden cameras — analog video transmitters
-    (900, 928, "Hidden Camera 900MHz", "📹", 0),
-    (1080, 1200, "Hidden Camera 1.2GHz", "📹", 0),
-    (1200, 1300, "Hidden Camera 1.2GHz", "📹", 0),
-    (2400, 2483, "Hidden Camera 2.4GHz", "📹", 0),
-    (5725, 5875, "Hidden Camera 5.8GHz", "📹", 0),
-    (5925, 7125, "WiFi 6E Camera 6GHz", "📹", 0),
 
     # FPV video transmitters (used in drones and spy cameras)
-    (5645, 5945, "FPV Video TX 5.8GHz", "🎯", 1),
-    (430, 450, "FPV Video TX 70cm", "🎯", 1),
-    (1080, 1300, "FPV Video TX 1.2GHz", "🎯", 1),
 
     # GPS trackers
 
     # GSM/LTE IMSI catchers (StingRay, cell-site simulators)
-    (935, 960, "GSM IMSI Catcher", "📡", 0),
-    (1805, 1880, "GSM 1800 IMSI Catcher", "📡", 0),
-    (2110, 2170, "3G IMSI Catcher", "📡", 0),
-    (2620, 2690, "LTE IMSI Catcher", "📡", 0),
-    (869, 894, "CDMA IMSI Catcher", "📡", 0),
-    (791, 862, "LTE 800 IMSI Catcher", "📡", 0),
-    (2500, 2570, "LTE 2600 IMSI Catcher", "📡", 0),
-    (3400, 3800, "5G NR IMSI Catcher", "📡", 0),
 
     # Audio bugs / wiretaps
-    (88, 108, "FM Band Bug", "🎙", 0),
-    (108, 137, "Air Band Bug", "🎙", 0),
 
     # Bluetooth trackers (AirTag, Tile, SmartTag, Flipper)
-    (2402, 2480, "BT Tracker (AirTag/Tile)", "📎", 2),
 
     # WiFi spy cameras
-    (2412, 2462, "WiFi Spy Camera", "📷", 1),
-    (5180, 5825, "WiFi 5GHz Spy Camera", "📷", 1),
-    (5925, 7125, "WiFi 6E Spy Camera", "📷", 1),
 
     # Flock Safety ALPR cameras (from AirHound)
-    (2400, 2483, "Flock Safety Camera", "📷", 0),
-    (5180, 5825, "Flock Safety Camera 5GHz", "📷", 0),
 
     # Cell phone signal snoopers / IMSI catchers
-    (700, 800, "Cell Snooper 700MHz", "📱", 0),
-    (800, 900, "Cell Snooper 850MHz", "📱", 0),
-    (1700, 1800, "Cell Snooper 1700MHz", "📱", 0),
-    (1900, 2000, "Cell Snooper 1900MHz", "📱", 0),
 
     # RF signal jammers
-    (800, 960, "Cell Jammer", "🚫", 0),
-    (1800, 1900, "Cell Jammer DCS", "🚫", 0),
-    (2100, 2200, "3G Jammer", "🚫", 0),
-    (2400, 2500, "WiFi/Drone Jammer", "🚫", 0),
-    (1570, 1580, "GPS Jammer", "🚫", 0),
-    (1200, 1300, "GPS L2 Jammer", "🚫", 0),
 
     # Radar detectors / speed cameras
     (10500, 10550, "X-band Radar", "🚨", 2),
-    (24050, 24250, "K-band Radar", "🚨", 2),
-    (33400, 36000, "Ka-band Radar", "🚨", 2),
 
     # Keyloggers / RF emanations
-    (0, 30, "Keylogger RF Emission", "⌨", 0),
 
     # Satellite phones (could be used for covert comms)
     (1616, 1626, "Iridium Sat Phone", "🛰", 2),
@@ -83,47 +38,18 @@ SPY_DEVICES = [
     (1626, 1660, "Globalstar Sat Phone", "🛰", 2),
 
     # Covert video links
-    (1700, 1900, "Covert Video Link", "🎥", 0),
-    (2200, 2300, "Covert Video Link", "🎥", 0),
-    (3000, 3500, "Covert Video Link S-band", "🎥", 0),
 
     # Drones
-    (900, 928, "Drone Control 900MHz", "🛸", 1),
-    (2400, 2483, "Drone Control 2.4GHz", "🛸", 1),
-    (5725, 5875, "Drone Video 5.8GHz", "🛸", 1),
-    (1430, 1444, "Drone Video 1.4GHz", "🛸", 1),
-    (2300, 2500, "DJI OcuSync/O3/O4", "🛸", 1),
-    (5725, 5875, "DJI OccuSync Video", "🛸", 1),
-    (900, 928, "ExpressLRS (ELRS)", "🛸", 1),
-    (2400, 2483, "ExpressLRS (ELRS)", "🛸", 1),
-    (868, 870, "TBS Crossfire EU", "🛸", 1),
-    (915, 928, "TBS Crossfire US", "🛸", 1),
-    (2400, 2483, "TBS Tracer", "🛸", 1),
-    (2400, 2483, "FrSky ACCESS", "🛸", 1),
-    (5725, 5875, "HDZero Digital FPV", "🛸", 1),
-    (5725, 5875, "Walksnail Avatar", "🛸", 1),
 
     # Raven acoustic sensors (ShotSpotter) — from AirHound
-    (2400, 2483, "Raven Acoustic Sensor", "🔫", 1),
 
     # Flipper Zero — hacking multi-tool (from AirHound)
-    (2402, 2480, "Flipper Zero", "🔧", 2),
 
     # Wireless microphone systems (covert audio)
-    (174, 216, "Wireless Mic VHF", "🎙", 0),
-    (470, 698, "Wireless Mic UHF", "🎙", 0),
-    (1785, 1805, "DECT Phone Bug", "🎙", 0),
-    (1880, 1900, "DECT Phone Bug", "🎙", 0),
 
     # Zigbee/Z-Wave smart home surveillance
-    (2400, 2483, "Zigbee Device", "🏠", 2),
-    (868, 868, "Z-Wave EU Device", "🏠", 2),
-    (908, 916, "Z-Wave US Device", "🏠", 2),
 
     # LoRa surveillance devices
-    (868, 870, "LoRa Device EU", "📡", 2),
-    (902, 928, "LoRa Device US", "📡", 2),
-    (433, 434, "LoRa Device 433MHz", "📡", 2),
 ]
 
 # Icon mapping for signal types
@@ -188,7 +114,8 @@ def identify_spy_device(freq_mhz, std):
     Bursty signals (std > 3) in those bands are cellular/digital, not cameras.
     Satellite frequencies are excluded — they're not spy devices.
     """
-    # Satellite exclusion — these are navigation signals, not spy devices
+    # Satellite NAVIGATION exclusion — these are navigation signals, not spy devices
+    # NOTE: Iridium/Inmarsat/Globalstar are sat PHONES — NOT excluded (they're in spy_db)
     _sat_ranges = [
         (1574, 1577),  # GPS L1, Galileo E1, GLONASS
         (1227, 1228),  # GPS L2
@@ -199,8 +126,6 @@ def identify_spy_device(freq_mhz, std):
         (1207, 1210),  # BeiDou B2
         (1268, 1269),  # BeiDou B3
         (1191, 1192),  # Galileo E5
-        (1616, 1627),  # Iridium
-        (1525, 1559),  # Inmarsat
         (1087, 1095),  # ADS-B
     ]
     for sat_lo, sat_hi in _sat_ranges:
@@ -214,7 +139,8 @@ def identify_spy_device(freq_mhz, std):
         (470, 862),    # DVB-T2/TV
         (880, 960),    # GSM900
         (1805, 1880),  # GSM1800
-        (1920, 2170),  # 3G/LTE
+        (1920, 1979),  # 3G/LTE (before Inmarsat 1980-2010)
+        (2011, 2170),  # 3G/LTE (after Inmarsat 1980-2010)
         (2300, 2500),  # WiFi 2.4GHz (narrower — don't exclude 2.5GHz drone control)
         (5150, 5875),  # WiFi 5GHz
         (108, 137),    # Air band
