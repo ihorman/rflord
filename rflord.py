@@ -2516,27 +2516,28 @@ def main_curses(stdscr, devices):
                 main_curses._last_capture[freq_key] = now_ts
         
         if camera_signals:
-            def _camera_worker(sigs):
-                for s in sigs:
-                    f = s['freq'] / 1e6
-                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                    label = spy_name or get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing screenshot")
-                    # Record spy event to persistent storage
-                    if web_dash:
-                        web_dash.record_spy_event(
-                            freq_mhz=f, device_name=label,
-                            threat_level=threat if threat is not None else 1,
-                            peak_dbfs=s['peak'],
-                            distance=est_distance(f, s['peak']),
-                            details=f"Camera/FPV signal detected (std={s['std']:.1f})",
-                        )
-                    screenshot = try_fpv_decode(f)
-                    if screenshot:
-                        log.warning(f"HIDDEN CAMERA: screenshot saved {screenshot}")
-                    else:
-                        log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
-            cam_thread = threading.Thread(target=_camera_worker, args=(camera_signals,),
+            # Only capture ONE screenshot per scan cycle (strongest signal)
+            strongest = max(camera_signals, key=lambda s: s['peak'])
+            def _camera_worker(sig):
+                f = sig['freq'] / 1e6
+                spy_name, spy_icon, threat = identify_spy_device(f, sig['std'])
+                label = spy_name or get_signal_type(f, 0, 0, sig['std'], artemis_db)
+                log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={sig['peak']:.1f} dBFS — capturing screenshot")
+                # Record spy event to persistent storage
+                if web_dash:
+                    web_dash.record_spy_event(
+                        freq_mhz=f, device_name=label,
+                        threat_level=threat if threat is not None else 1,
+                        peak_dbfs=sig['peak'],
+                        distance=est_distance(f, sig['peak']),
+                        details=f"Camera/FPV signal detected (std={sig['std']:.1f})",
+                    )
+                screenshot = try_fpv_decode(f)
+                if screenshot:
+                    log.warning(f"HIDDEN CAMERA: screenshot saved {screenshot}")
+                else:
+                    log.info(f"HIDDEN CAMERA: no video frame at {f:.1f} MHz")
+            cam_thread = threading.Thread(target=_camera_worker, args=(strongest,),
                              daemon=True, name="rflord-camera")
             cam_thread.start()
             _hackrf_workers.append(cam_thread)
