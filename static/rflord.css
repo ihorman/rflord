@@ -22,8 +22,8 @@
   --spy-bg: #2a1a00;
   --spy: #ffa940;
   --modal-overlay: rgba(0,0,0,0.65);
-  --tap-target: 44px;
-  --radius: 10px;
+  --tap-target: 31px;
+  --radius: 7px;
   --header-bg: #0f1629;
 }
 
@@ -40,20 +40,20 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
+  font-size: 10px;
   min-height: 100vh;
-  line-height: 1.4;
+  line-height: 1.3;
 }
 
 /* ---- HEADER ---- */
 header {
   background: var(--header-bg);
-  padding: 10px 16px;
+  padding: 7px 12px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
-  border-bottom: 2px solid var(--border);
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 100;
@@ -62,28 +62,28 @@ header {
 .header-brand {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 7px;
   flex-shrink: 0;
 }
 
 .header-brand img {
-  width: 36px;
-  height: 36px;
-  border-radius: 6px;
+  width: 25px;
+  height: 25px;
+  border-radius: 4px;
   object-fit: contain;
 }
 
 .header-brand h1 {
-  font-size: 1.25em;
+  font-size: 1.0em;
   color: var(--accent);
   white-space: nowrap;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.4px;
 }
 
 .header-meta {
   display: flex;
-  gap: 16px;
+  gap: 11px;
   flex-wrap: wrap;
   font-size: 0.82em;
   color: var(--text-dim);
@@ -93,12 +93,12 @@ header {
 .header-meta .tag {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   background: rgba(255,255,255,0.05);
-  padding: 4px 10px;
-  border-radius: 6px;
+  padding: 3px 7px;
+  border-radius: 4px;
   white-space: nowrap;
-  min-height: var(--tap-target);
+  min-height: 31px;
 }
 
 .header-meta .tag b {
@@ -107,8 +107,8 @@ header {
 
 .status-dot {
   display: inline-block;
-  width: 10px;
-  height: 10px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -136,8 +136,8 @@ header {
 .container {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  padding: 12px;
+  gap: 8px;
+  padding: 8px;
   max-width: 1800px;
   margin: 0 auto;
 }
@@ -145,7 +145,7 @@ header {
 /* ---- PANEL ---- */
 .panel {
   background: var(--panel);
-  border-radius: var(--radius);
+  border-radius: 7px;
   overflow: hidden;
   border: 1px solid var(--border);
   display: flex;
@@ -153,22 +153,22 @@ header {
 }
 
 .panel-header {
-  padding: 12px 14px;
+  padding: 8px 10px;
   font-weight: 600;
   font-size: 1em;
   display: flex;
   justify-content: space-between;
   align-items: center;
   flex-shrink: 0;
-  min-height: var(--tap-target);
+  min-height: 31px;
 }
 
 .panel-header .count {
   font-size: 0.8em;
   opacity: 0.7;
   background: rgba(255,255,255,0.08);
-  padding: 2px 8px;
-  border-radius: 10px;
+  padding: 1px 6px;
+  border-radius: 7px;
 }
 
 .panel.sus .panel-header {
@@ -190,11 +190,11 @@ header {
 .scroll-wrap {
   overflow-y: auto;
   flex: 1;
-  max-height: calc(100vh - 200px);
+  max-height: calc(100vh - 140px);
 }
 
 .scroll-wrap.spy-scroll {
-  max-height: 320px;
+  max-height: 220px;
 }
 
 table {
@@ -204,10 +204,10 @@ table {
 
 th {
   text-align: left;
-  padding: 8px 10px;
+  padding: 6px 7px;
   font-size: 0.72em;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border);
   position: sticky;
@@ -217,7 +217,7 @@ th {
 }
 
 td {
-  padding: 8px 10px;
+  padding: 4px 7px;
   border-bottom: 1px solid var(--border-light);
   font-family: 'Consolas', 'Courier New', monospace;
   font-size: 0.85em;
@@ -259,7 +259,7 @@ tr.row-ok td { background: transparent; }
 
 .empty-msg {
   text-align: center;
-  padding: 32px 16px;
+  padding: 22px 11px;
   color: var(--text-faint);
   font-style: italic;
 }
@@ -284,12 +284,12 @@ tr.threat-row-2 td { background: rgba(58,42,10,0.2); }
 /* ---- FOOTER ---- */
 footer {
   background: var(--header-bg);
-  padding: 10px 16px;
+  padding: 7px 12px;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   font-size: 0.78em;
   color: var(--text-dim);
   border-top: 1px solid var(--border);
@@ -308,7 +308,7 @@ footer .footer-stat b {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 11px;
   opacity: 0;
   visibility: hidden;
   transition: opacity 0.2s, visibility 0.2s;
@@ -322,13 +322,13 @@ footer .footer-stat b {
 .modal-content {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
-  max-width: 500px;
+  border-radius: 7px;
+  max-width: 350px;
   width: 100%;
   max-height: 85vh;
   overflow-y: auto;
-  padding: 20px;
-  transform: translateY(20px);
+  padding: 14px;
+  transform: translateY(14px);
   transition: transform 0.2s;
   position: relative;
 }
@@ -339,18 +339,18 @@ footer .footer-stat b {
 
 .modal-close {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  width: var(--tap-target);
-  height: var(--tap-target);
+  top: 7px;
+  right: 7px;
+  width: 31px;
+  height: 31px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: rgba(255,255,255,0.08);
   border: none;
-  border-radius: 8px;
+  border-radius: 6px;
   color: var(--text-dim);
-  font-size: 1.4em;
+  font-size: 1.2em;
   cursor: pointer;
   transition: background 0.15s;
 }
@@ -360,19 +360,19 @@ footer .footer-stat b {
 }
 
 .modal-title {
-  font-size: 1.1em;
+  font-size: 1.0em;
   font-weight: 700;
   color: var(--accent);
-  margin-bottom: 16px;
-  padding-right: 44px;
+  margin-bottom: 11px;
+  padding-right: 31px;
 }
 
 .modal-row {
   display: flex;
   justify-content: space-between;
-  padding: 8px 0;
+  padding: 6px 0;
   border-bottom: 1px solid var(--border-light);
-  gap: 12px;
+  gap: 8px;
 }
 
 .modal-label {
