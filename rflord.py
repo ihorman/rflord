@@ -90,7 +90,7 @@ ALARM_ENABLED = _cfg['voice'].get('alarm_enabled', True)
 ALARM_THRESHOLD_M = _cfg['voice'].get('alarm_threshold_m', 100)
 WARNING_ENABLED = _cfg['voice'].get('warning_enabled', False)
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
-DECODED_DIR = os.path.expanduser('~/.flord')
+DECODED_DIR = os.path.expanduser('~/.rflord')
 MAX_AGE_DAYS = _cfg['history']['max_days']
 
 # Color pairs

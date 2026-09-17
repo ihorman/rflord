@@ -352,7 +352,7 @@ class WebDashboard:
         self._last_update_time: float = 0
         self._thread: threading.Thread | None = None
         # Cache file for persisting last good data across restarts
-        self._cache_file = os.path.expanduser('~/.flord/web_cache.json')
+        self._cache_file = os.path.expanduser('~/.rflord/web_cache.json')
         self._load_cache()
         # Detect template/static dirs relative to web.py
         _dir = os.path.dirname(os.path.abspath(__file__))

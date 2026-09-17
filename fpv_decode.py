@@ -81,7 +81,7 @@ def capture_iq_hackrf(freq_mhz, duration_s, sample_rate=10000000):
     try:
         ts = time.strftime("%Y%m%d_%H%M%S")
         freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
-        iq_dir = os.path.expanduser('~/.flord/iq_samples')
+        iq_dir = os.path.expanduser('~/.rflord/iq_samples')
         os.makedirs(iq_dir, exist_ok=True)
         iq_path = os.path.join(iq_dir, f"{ts}_{freq_label}MHz.iq")
         raw.tofile(iq_path)
