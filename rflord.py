@@ -86,6 +86,9 @@ _PERIMETER_IGNORE_BANDS = [
 TTS_VOICE = _cfg['voice']['voice_name']
 HAL_EFFECT = os.path.expanduser(_cfg['voice']['hal_effect'])
 VOICE_THRESHOLD = _cfg['voice']['threshold']
+ALARM_ENABLED = _cfg['voice'].get('alarm_enabled', True)
+ALARM_THRESHOLD_M = _cfg['voice'].get('alarm_threshold_m', 100)
+WARNING_ENABLED = _cfg['voice'].get('warning_enabled', False)
 ARTEMIS_DB = "/opt/artemis/Data/db.csv"
 DECODED_DIR = os.path.expanduser('~/.flord')
 MAX_AGE_DAYS = _cfg['history']['max_days']
@@ -1305,6 +1308,10 @@ def _read_key(stdscr):
             return 'interval_down'
         elif key == ord('s') or key == ord('S'):
             return 'suppress'
+        elif key == ord('a') or key == ord('A'):
+            return 'alarm_toggle'
+        elif key == ord('w') or key == ord('W'):
+            return 'warning_toggle'
         elif key == curses.KEY_UP:
             _cursor_active = True
             return 'cursor_up'
@@ -1964,6 +1971,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     voice_str = "ON" if voice_enabled else "OFF"
     sup_str = "ON" if _suppress_active else "OFF"
     peri_str = "ON" if perimeter and perimeter.active else "OFF"
+    alarm_str = "ON" if ALARM_ENABLED else "OFF"
+    warn_str = "ON" if WARNING_ENABLED else "OFF"
     cur_str = ""
     if _cursor_active:
         if _cursor_panel == 'sus' and sus_grouped:
@@ -1971,7 +1980,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
         elif _cursor_panel == 'ok' and ok_grouped:
             cur_str = f" [OK {_cursor_pos+1}/{len(ok_grouped)}]"
     
-    keys = f" q:Quit r:Rescan c:Capture v:Voice({voice_str}) m:Mute s:Suppress({sup_str}) p:Perimeter({peri_str}) +/-:Interval({INTERVAL}s) ←→:Panel ↑↓:Nav d:Detail e:Export l:Log h:History{cur_str}{extra}"
+    keys = f" q:Quit r:Rescan c:Capture v:Voice({voice_str}) m:Mute s:Suppress({sup_str}) p:Perimeter({peri_str}) a:Alarm({alarm_str}/{ALARM_THRESHOLD_M}m) w:Warning({warn_str}) +/-:Interval({INTERVAL}s) ←→:Panel ↑↓:Nav d:Detail e:Export l:Log h:History{cur_str}{extra}"
     try:
         stdscr.addstr(row, 0, keys[:W].ljust(W), curses.color_pair(CP_DIM))
     except: pass
@@ -1980,7 +1989,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     stdscr.refresh()
 
 def main_curses(stdscr, devices):
-    global INTERVAL, VOICE_THRESHOLD, _cursor_pos, _suppress_active
+    global INTERVAL, VOICE_THRESHOLD, _cursor_pos, _suppress_active, ALARM_ENABLED, WARNING_ENABLED
     if isinstance(devices, str):
         devices = [devices]  # Backward compat
     device = devices[0]  # Primary device
@@ -2337,16 +2346,21 @@ def main_curses(stdscr, devices):
                     known_freqs[rm.rule_name] = time.time()
                     alert_count += 1
             # Voice alert for threats (threaded — non-blocking)
-            # Only voice-alert if at least one suspicious signal is within 100m
+            # Voice alert for threats — ALARM if close, WARNING if far
             voice_msg = rule_engine.format_voice_alert(assessment)
             if voice_msg and voice_enabled:
-                any_close = any(est_distance_m(s['freq']/1e6, s['peak']) <= 100
+                has_alarm = any(est_distance_m(s['freq']/1e6, s['peak']) < ALARM_THRESHOLD_M
                                for s in unique
                                if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger'))
-                if any_close:
-                    speak(voice_msg)
+                has_warning = any(est_distance_m(s['freq']/1e6, s['peak']) >= ALARM_THRESHOLD_M
+                                 for s in unique
+                                 if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger'))
+                if has_alarm and ALARM_ENABLED:
+                    speak(voice_msg.replace("Alert.", "ALARM."))
+                elif has_warning and WARNING_ENABLED:
+                    speak(voice_msg.replace("Alert.", "WARNING."))
                 else:
-                    log.info(f"Rule engine voice skip: no signals within 100m")
+                    log.info(f"Rule engine voice skip: alarm={has_alarm} warning={has_warning}")
 
         # Detect active probes (direction-finding signals)
         noise_floor = estimate_noise_floor(unique)
@@ -2469,13 +2483,16 @@ def main_curses(stdscr, devices):
                 if now_ts - last > CRITICAL_COOLDOWN:
                     dist = est_distance(f, s['peak'])
                     dist_m = est_distance_m(f, s['peak'])
-                    # Only voice-alert if within 100m
-                    if dist_m > 100:
+                    # Determine alert level based on distance
+                    is_alarm = dist_m < ALARM_THRESHOLD_M
+                    if is_alarm and not ALARM_ENABLED:
+                        continue
+                    if not is_alarm and not WARNING_ENABLED:
                         continue
                     main_curses._last_critical[freq_key] = now_ts
-                    # HAL9000 voice alert with distance
-                    alert_msg = f"Warning. {reason} detected at {f:.0f} megahertz. Distance {dist}. Threat level critical."
-                    log.warning(f"CRITICAL ALERT: {reason} at {f:.1f} MHz, {dist}")
+                    prefix = "ALARM" if is_alarm else "WARNING"
+                    alert_msg = f"{prefix}. {reason} detected at {f:.0f} megahertz. Distance {dist}. Threat level critical."
+                    log.warning(f"CRITICAL {prefix}: {reason} at {f:.1f} MHz, {dist}")
                     if voice_enabled:
                         speak(alert_msg)
                     # Auto-screenshot for FPV/camera
@@ -2567,7 +2584,7 @@ def main_curses(stdscr, devices):
             voice_thread.start()
             _hackrf_workers.append(voice_thread)
         
-        # Voice alert — ONLY if signal is within 100m
+        # Voice alert — ALARM if < threshold, WARNING if >= threshold
         if new_suspicious and voice_enabled:
             log.info(f"Voice alert: {len(new_suspicious)} new suspicious, threshold={VOICE_THRESHOLD}")
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
@@ -2580,24 +2597,29 @@ def main_curses(stdscr, devices):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     dist_m = est_distance_m(f, s['peak'])
-                    # Only voice-alert if within 100m
-                    if dist_m > 100:
-                        log.info(f"Voice skip: {f:.1f} MHz at {dist} (>100m)")
+                    # Determine alert level based on distance
+                    is_alarm = dist_m < ALARM_THRESHOLD_M
+                    if is_alarm and not ALARM_ENABLED:
+                        log.info(f"Alarm skip (disabled): {f:.1f} MHz at {dist}")
                         continue
+                    if not is_alarm and not WARNING_ENABLED:
+                        log.info(f"Warning skip (silent): {f:.1f} MHz at {dist}")
+                        continue
+                    prefix = "ALARM!" if is_alarm else "WARNING!"
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
+                            announcements.append(f"{prefix} {spy_name} detected at {f:.0f} megahertz{dist_str}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
+                            announcements.append(f"{prefix} {f:.0f} megahertz, {sig_type}{dist_str}")
                     else:
                         artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                         if artemis_entry:
                             name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{f:.0f} megahertz, identified as {name}{dist_str}")
+                            announcements.append(f"{prefix} {f:.0f} megahertz, identified as {name}{dist_str}")
                         else:
                             spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                             if spy_name:
@@ -2687,6 +2709,14 @@ def main_curses(stdscr, devices):
                     _suppress_start()  # Sets _suppress_active=True on success
                 else:
                     _suppress_stop()   # Sets _suppress_active=False
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
+            elif key == 'alarm_toggle':
+                ALARM_ENABLED = not ALARM_ENABLED
+                log.info(f"Alarm voice: {'ON' if ALARM_ENABLED else 'OFF'}")
+                draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
+            elif key == 'warning_toggle':
+                WARNING_ENABLED = not WARNING_ENABLED
+                log.info(f"Warning voice: {'ON' if WARNING_ENABLED else 'OFF'}")
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'perimeter':
                 if not has_hackrf:
@@ -3047,7 +3077,7 @@ def main_ansi(devices=None):
             cleanup_old_decoded()
             cleanup_old_logs()
         
-        # Voice alert — ONLY if signal is within 100m
+        # Voice alert — ALARM if < threshold, WARNING if >= threshold
         if new_suspicious:
             new_suspicious.sort(key=lambda x: x['peak'], reverse=True)
             above_threshold = [s for s in new_suspicious if s['peak'] > VOICE_THRESHOLD]
@@ -3057,29 +3087,33 @@ def main_ansi(devices=None):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     dist_m = est_distance_m(f, s['peak'])
-                    # Only voice-alert if within 100m
-                    if dist_m > 100:
+                    # Determine alert level based on distance
+                    is_alarm = dist_m < ALARM_THRESHOLD_M
+                    if is_alarm and not ALARM_ENABLED:
                         continue
+                    if not is_alarm and not WARNING_ENABLED:
+                        continue
+                    prefix = "ALARM!" if is_alarm else "WARNING!"
                     sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
                         spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                         if spy_name:
-                            announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
+                            announcements.append(f"{prefix} {spy_name} detected at {f:.0f} megahertz{dist_str}")
                         else:
-                            announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
+                            announcements.append(f"{prefix} {f:.0f} megahertz, {sig_type}{dist_str}")
                     else:
                         artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
                         if artemis_entry:
                             name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{f:.0f} megahertz, identified as {name}{dist_str}")
+                            announcements.append(f"{prefix} {f:.0f} megahertz, identified as {name}{dist_str}")
                         else:
                             spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                             if spy_name:
-                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
+                                announcements.append(f"{prefix} {spy_name} detected at {f:.0f} megahertz{dist_str}")
                             else:
-                                announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
+                                announcements.append(f"{prefix} {f:.0f} megahertz, {sig_type}{dist_str}")
                 voice_result = None
                 for s in above_threshold:
                     if s['std'] < 6:

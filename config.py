@@ -21,6 +21,9 @@ DEFAULTS = {
         'voice_name': 'en-US-SteffanNeural',
         'rate': '-15%',
         'hal_effect': '~/.local/bin/hal-effect.sh',
+        'alarm_enabled': True,       # Voice alarm for signals < alarm_threshold_m
+        'alarm_threshold_m': 100,    # Distance in meters: < this = ALARM, >= this = WARNING
+        'warning_enabled': False,    # Voice warning for signals >= alarm_threshold_m (silent by default)
     },
     'display': {
         'theme': 'dark',

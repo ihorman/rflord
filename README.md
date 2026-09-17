@@ -58,6 +58,8 @@ RFLord is a real-time RF spectrum monitor for the ClockworkPi uConsole with Hack
 | `v` | Voice: speak current status |
 | `m` | Mute/unmute voice alerts |
 | `s` | Suppress mode (jam selected bands) |
+| `a` | Toggle alarm voice (signals < threshold) |
+| `w` | Toggle warning voice (signals >= threshold) |
 | `+`/`-` | Increase/decrease scan interval |
 | `↑`/`↓` | Navigate signals in active panel |
 | `←`/`→` | Switch between SUSPICIOUS/KNOWN panels |
@@ -157,6 +159,9 @@ scan:
 voice:
   enabled: true
   threshold: -50  # dBFS minimum for voice alerts
+  alarm_enabled: true       # Voice alarm for signals < alarm_threshold_m
+  alarm_threshold_m: 100    # Distance in meters: < this = ALARM, >= this = WARNING
+  warning_enabled: false    # Voice warning for signals >= alarm_threshold_m (silent by default)
 history:
   enabled: true
   db_path: ~/.local/share/rflord/history.db
@@ -170,6 +175,15 @@ web:
 blacklist:
   file: ~/.config/rflord/ignore.conf
 ```
+
+### Alert Levels
+
+| Level | Distance | Voice | Description |
+|-------|----------|-------|-------------|
+| **ALARM** | < `alarm_threshold_m` (default 100m) | ✅ ON by default | Immediate threat — FPV drone, camera, military at close range |
+| **WARNING** | >= `alarm_threshold_m` | ❌ OFF by default | Distant threat — signal detected but not immediately dangerous |
+
+Toggle at runtime with `a` (alarm) and `w` (warning) keys.
 
 ## File Structure
 
