@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>RFLord — RF Spectrum Monitor</title>
+  <link rel="stylesheet" href="/static/rflord.css">
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="header-brand">
+    <img src="/static/logo.png" alt="RFLord" width="36" height="36">
+    <h1>RFLord</h1>
+  </div>
+  <div class="header-meta">
+    <span class="tag"><span class="status-dot" id="statusDot"></span> <b id="connStatus">Connecting&hellip;</b></span>
+    <span class="tag">Ver: <b id="version">&mdash;</b></span>
+    <span class="tag">Uptime: <b id="uptime">&mdash;</b></span>
+    <span class="tag">Alerts: <b class="alert-badge" id="alerts">0</b></span>
+    <span class="tag">Last: <b id="lastUpdate">&mdash;</b></span>
+  </div>
+</header>
+
+<!-- MAIN PANELS -->
+<div class="container">
+
+  <!-- Suspicious Signals -->
+  <div class="panel sus">
+    <div class="panel-header">
+      &#9888; Suspicious Signals <span class="count" id="susCount">0</span>
+    </div>
+    <div class="scroll-wrap">
+      <table>
+        <thead><tr>
+          <th>Cnt</th><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th>
+        </tr></thead>
+        <tbody id="susBody">
+          <tr><td colspan="7" class="empty-msg">No suspicious signals</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Known Signals -->
+  <div class="panel known">
+    <div class="panel-header">
+      &#10003; Known Signals <span class="count" id="knownCount">0</span>
+    </div>
+    <div class="scroll-wrap">
+      <table>
+        <thead><tr>
+          <th>Cnt</th><th>Freq (MHz)</th><th>Power</th><th>Std</th><th>Dist</th><th>Type</th><th>Identification</th>
+        </tr></thead>
+        <tbody id="knownBody">
+          <tr><td colspan="7" class="empty-msg">No known signals</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Spy Events -->
+  <div class="panel spy bottom-row">
+    <div class="panel-header">
+      &#128274; Drone / Hidden Camera Events (30 days) <span class="count" id="spyCount">0</span>
+    </div>
+    <div class="scroll-wrap spy-scroll">
+      <table>
+        <thead><tr>
+          <th>Time</th><th>Freq (MHz)</th><th>Threat</th><th>Device</th><th>Power</th><th>Dist</th><th>Details</th>
+        </tr></thead>
+        <tbody id="spyBody">
+          <tr><td colspan="7" class="empty-msg">No drone/camera events recorded</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<!-- FOOTER -->
+<footer>
+  <span class="footer-stat">Scans: <b id="scanCount">&mdash;</b></span>
+  <span class="footer-stat">Last update: <b id="lastUpdateFooter">&mdash;</b></span>
+  <span class="footer-stat">Device: <b id="device">&mdash;</b></span>
+</footer>
+
+<!-- SIGNAL DETAIL MODAL -->
+<div class="modal-overlay" id="modalOverlay">
+  <div class="modal-content">
+    <button class="modal-close" aria-label="Close">&times;</button>
+    <div class="modal-title" id="modalTitle">Signal</div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<script src="/static/rflord.js"></script>
+</body>
+</html>

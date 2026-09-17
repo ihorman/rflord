@@ -5,7 +5,7 @@ import threading
 import time
 import os
 import sqlite3
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, render_template
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
@@ -319,7 +319,16 @@ class WebDashboard:
         self._lock = threading.Lock()
         self._version = 0
         self._thread: threading.Thread | None = None
-        self._app = Flask(__name__)
+        # Detect template/static dirs relative to web.py
+        _dir = os.path.dirname(os.path.abspath(__file__))
+        _tpl = os.path.join(_dir, 'templates')
+        _static = os.path.join(_dir, 'static')
+        self._has_templates = os.path.isdir(_tpl) and os.path.isfile(os.path.join(_tpl, 'index.html'))
+        self._app = Flask(
+            __name__,
+            static_folder=_static if os.path.isdir(_static) else None,
+            template_folder=_tpl if self._has_templates else None,
+        )
         self._app.logger.setLevel("WARNING")
         self._running = False
         self._spy_db = SpyEventDB()
@@ -331,6 +340,8 @@ class WebDashboard:
 
         @app.route("/")
         def index():
+            if self._has_templates:
+                return render_template("index.html")
             return Response(DASHBOARD_HTML, content_type="text/html")
 
         @app.route("/api/signals")
