@@ -232,9 +232,9 @@ def has_video_signal(iq, sample_rate):
             peak_power = psd_db[idx]
             harmonic_powers.append(peak_power - local_noise)
 
-        # If at least 3 of 4 harmonics are >6 dB above local noise, it's video
-        strong = sum(1 for p in harmonic_powers if p > 6)
-        if strong >= 3:
+        # If at least 2 of 4 harmonics are >5 dB above local noise, it's video
+        strong = sum(1 for p in harmonic_powers if p > 5)
+        if strong >= 2:
             return True
 
     return False
@@ -390,16 +390,10 @@ def extract_frame(video, h_sync_positions, sample_rate, tv_std):
 
 
 def normalize_frame(frame, sync_level=None, black_level=None):
-    """Normalize frame to 0-255 uint8 using IRE levels.
-    Sync tip = 0 IRE, black = 7.5 IRE, white = 100 IRE."""
-    if sync_level is not None and black_level is not None:
-        ire_range = black_level - sync_level
-        if ire_range > 0:
-            frame_norm = (frame - sync_level) / (ire_range * 13.3)  # 100/7.5
-            frame_norm = np.clip(frame_norm, 0, 1)
-            return (frame_norm * 255).astype(np.uint8)
-
-    # Fallback: percentile-based normalization (more robust than min/max)
+    """Normalize frame to 0-255 uint8.
+    Always uses percentile-based normalization — more robust than IRE-based
+    because IRE levels depend on accurate sync/black detection which often
+    fails with real-world signals."""
     p_low = np.percentile(frame, 2)
     p_high = np.percentile(frame, 98)
     if p_high - p_low < 1e-10:
