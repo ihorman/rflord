@@ -2094,6 +2094,7 @@ def main_curses(stdscr, devices):
                 web_url = f"http://{ip}:{web_port}"
             except:
                 web_url = f"http://localhost:{web_port}"
+            status.append(f"Web Dashboard: {web_url}")
             log.info(f"Web dashboard: {web_url}")
         except Exception as e:
             log.warning(f"Web dashboard failed: {e}")
