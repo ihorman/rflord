@@ -2317,48 +2317,59 @@ def main_curses(stdscr, devices):
 
         # Web dashboard update — pass grouped data same as curses
         if web_dash:
-            sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
-                              key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
-            ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
-                             key=lambda x: x["peak"], reverse=True)
-            sus_grouped = group_suspicious(sus_list, artemis_db)
-            ok_grouped = group_signals_by_type(ok_list, artemis_db)
-            # Format for web JS: {freq, power, std, distance, type, identification, count, band, category, icon, classify}
-            web_sus = []
-            for g in sus_grouped:
-                f = g['freq']
-                spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
-                cls = classify(f, g['peak'], g.get('std', 0))
-                identification = g.get('remark', '')
-                if spy_name:
-                    identification = f"{spy_icon} {spy_name}" + (f" — {identification}" if identification else "")
-                web_sus.append({
-                    'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
-                    'distance': g['dist'], 'type': g['type'],
-                    'identification': identification,
-                    'count': g['count'], 'category': 'suspicious',
-                    'icon': spy_icon or '', 'classify': cls,
+            try:
+                sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+                                  key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
+                ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
+                                 key=lambda x: x["peak"], reverse=True)
+                sus_grouped = group_suspicious(sus_list, artemis_db)
+                ok_grouped = group_signals_by_type(ok_list, artemis_db)
+                # Format for web JS — spy device takes priority over frequency heuristics
+                web_sus = []
+                for g in sus_grouped:
+                    f = g['freq']
+                    spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
+                    cls = classify(f, g['peak'], g.get('std', 0))
+                    # Spy device is deterministic — use as type AND identification
+                    if spy_name:
+                        sig_type = f"{spy_icon} {spy_name}"
+                        identification = g.get('remark', '')
+                    else:
+                        sig_type = g['type']
+                        identification = g.get('remark', '')
+                    web_sus.append({
+                        'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
+                        'distance': g['dist'], 'type': sig_type,
+                        'identification': identification,
+                        'count': g['count'], 'category': 'suspicious',
+                        'icon': spy_icon or '', 'classify': cls,
+                    })
+                web_ok = []
+                for g in ok_grouped:
+                    f = g['freq']
+                    spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
+                    cls = classify(f, g['peak'], g.get('std', 0))
+                    # Spy device is deterministic — use as type AND identification
+                    if spy_name:
+                        sig_type = f"{spy_icon} {spy_name}"
+                        identification = g.get('remark', '')
+                    else:
+                        sig_type = g['type']
+                        identification = g.get('remark', '')
+                    web_ok.append({
+                        'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
+                        'distance': g['dist'], 'type': sig_type,
+                        'identification': identification,
+                        'count': g['count'], 'band': g.get('band', '?'), 'category': 'known',
+                        'icon': spy_icon or '', 'classify': cls,
+                    })
+                web_dash.update_signals(web_sus + web_ok, {
+                    'version': VERSION, 'alerts': alert_count, 'device': device,
+                    'sus_count': len(sus_grouped), 'ok_count': len(ok_grouped),
+                    'uptime': str(int(time.time() - start_time)),
                 })
-            web_ok = []
-            for g in ok_grouped:
-                f = g['freq']
-                spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
-                cls = classify(f, g['peak'], g.get('std', 0))
-                identification = g.get('remark', '')
-                if spy_name:
-                    identification = f"{spy_icon} {spy_name}" + (f" — {identification}" if identification else "")
-                web_ok.append({
-                    'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
-                    'distance': g['dist'], 'type': g['type'],
-                    'identification': identification,
-                    'count': g['count'], 'band': g.get('band', '?'), 'category': 'known',
-                    'icon': spy_icon or '', 'classify': cls,
-                })
-            web_dash.update_signals(web_sus + web_ok, {
-                'version': VERSION, 'alerts': alert_count, 'device': device,
-                'sus_count': len(sus_grouped), 'ok_count': len(ok_grouped),
-                'uptime': str(int(time.time() - start_time)),
-            })
+            except Exception as e:
+                log.warning(f"Web dashboard update failed: {e}")
 
         # Rule engine: unified threat assessment (RF + WiFi + BLE)
         assessment = rule_engine.process_rf_scan(unique)
