@@ -300,6 +300,66 @@ def normalize_frame(frame):
     return ((frame - mn) / (mx - mn) * 255).astype(np.uint8)
 
 
+def is_recognizable(frame_norm):
+    """Check if decoded frame contains recognizable video content (not just noise).
+
+    Returns True if the image has enough structure to be worth saving.
+    Real video has: horizontal correlation, edge structure, varying brightness.
+    Noise is: uniform random, no correlation, flat histogram.
+
+    Metrics (all must pass):
+    1. Row correlation: adjacent rows should be correlated (>0.3) in real video
+    2. Edge density: real video has edges (5-50% of pixels)
+    3. Brightness variance: real video has varying brightness (std > 15)
+    """
+    if frame_norm is None or frame_norm.size == 0:
+        return False
+
+    h, w = frame_norm.shape
+    if h < 20 or w < 100:
+        return False
+
+    f = frame_norm.astype(np.float32)
+
+    # 1. Row-to-row correlation (real video: >0.3, noise: ~0)
+    # Sample every 4th row for speed
+    correlations = []
+    for i in range(0, min(h - 1, 200), 4):
+        r1 = f[i]
+        r2 = f[i + 1]
+        # Pearson correlation
+        m1, m2 = np.mean(r1), np.mean(r2)
+        s1, s2 = np.std(r1), np.std(r2)
+        if s1 > 1 and s2 > 1:
+            corr = np.mean((r1 - m1) * (r2 - m2)) / (s1 * s2)
+            correlations.append(corr)
+    avg_corr = np.mean(correlations) if correlations else 0
+
+    # 2. Edge density (Sobel-like horizontal edges)
+    # Real video: 5-50% of pixels are edges. Noise: ~50% (random).
+    dy = np.abs(np.diff(f, axis=0))
+    threshold = np.std(dy) * 1.5
+    edge_pixels = np.sum(dy > threshold)
+    total_pixels = dy.size
+    edge_ratio = edge_pixels / total_pixels if total_pixels > 0 else 0
+
+    # 3. Brightness variance (real video: std > 15, noise: ~40-74)
+    brightness_std = np.std(f)
+
+    # Decision: ALL three metrics must indicate video content
+    has_correlation = avg_corr > 0.15
+    has_edges = 0.02 < edge_ratio < 0.7
+    has_variance = brightness_std > 10
+
+    # Debug info
+    print("  quality: corr=%.3f edge_ratio=%.3f bright_std=%.1f %s" % (
+        avg_corr, edge_ratio, brightness_std,
+        "PASS" if (has_correlation and has_edges and has_variance) else "FAIL"
+    ))
+
+    return has_correlation and has_edges and has_variance
+
+
 def main():
     parser = argparse.ArgumentParser(description='FPV Video Decoder')
     parser.add_argument('input', nargs='?', help='IQ file or "capture" for live capture')
@@ -363,6 +423,12 @@ def main():
         sys.exit(3)
 
     frame_norm = normalize_frame(frame)
+
+    # Quality check: skip saving if image is just noise
+    if not is_recognizable(frame_norm):
+        print("NOT RECOGNIZABLE — skipping save (noise)")
+        sys.exit(4)
+
     Image.fromarray(frame_norm, mode='L').save(args.output)
     print("Saved: %s (%dx%d)" % (args.output, frame_norm.shape[1], frame_norm.shape[0]))
 

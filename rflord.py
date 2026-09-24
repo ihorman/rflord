@@ -1713,6 +1713,12 @@ def try_fpv_decode(freq_mhz):
             if "NO VIDEO SIGNAL" in r:
                 log.info(f"CAMERA SCREENSHOT: no video signal at {freq_mhz:.1f} MHz — skipping")
                 return None
+            if "NOT RECOGNIZABLE" in r:
+                log.info(f"CAMERA SCREENSHOT: not recognizable at {freq_mhz:.1f} MHz — skipping noise")
+                return None
+            if "DECODE FAILED" in r:
+                log.info(f"CAMERA SCREENSHOT: decode failed at {freq_mhz:.1f} MHz")
+                return None
         if os.path.exists(out_file):
             log.info(f"CAMERA SCREENSHOT: saved {out_file}")
             return out_file
