@@ -2095,10 +2095,8 @@ def main_curses(stdscr, devices):
             web_dash = WebDashboard(port=web_port)
             web_dash.start()
             status.append(f"Web Dashboard: {web_url}")
-            log.info(f"Web dashboard: {web_url}")
         except Exception as e:
             status.append(f"Web Dashboard: {web_url} (failed: {e})")
-            log.warning(f"Web dashboard failed: {e}")
     else:
         status.append(f"Web Dashboard: disabled")
     # State persistence
