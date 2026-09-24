@@ -1707,7 +1707,7 @@ def try_fpv_decode(freq_mhz):
         log.info(f"CAMERA SCREENSHOT: attempting capture at {freq_mhz:.1f} MHz")
         # Use fpv_decode.py to capture and decode a video frame
         r = run_cmd(f"python3 {os.path.dirname(__file__)}/fpv_decode.py capture "
-                    f"--freq {freq_mhz} --auto --output {out_file} --duration 2", timeout=20)
+                    f"--freq {freq_mhz} --force --output {out_file} --duration 2", timeout=20)
         if r:
             log.info(f"CAMERA SCREENSHOT: result={r[:200]}")
             if "NO VIDEO SIGNAL" in r:

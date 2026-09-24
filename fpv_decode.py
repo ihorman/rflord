@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """
 FPV Video Decoder — Decode analog FPV video from IQ captures.
-Uses PySDR approach: FM demod → filter audio → resample to samples_per_line → reshape.
 
-No sync detection needed — image may be shifted but always recognizable.
-Proven approach from https://pysdr.org/content/fpv_video.html
+Dual-mode decoder:
+  1. PySDR approach (primary): FM demod → filter → resample → reshape
+     Tries multiple drift corrections, picks best result.
+  2. Sync-based (fallback): proper H-sync flywheel + per-line TBC.
+
+Based on: windytan, batchdrake, PALindrome, orecchiette, PySDR.
 
 Usage:
   python3 fpv_decode.py capture --freq 5800
-  python3 fpv_decode.py capture.raw --freq 1280 --standard PAL
-  python3 fpv_decode.py capture --freq 5800 --force
+  python3 fpv_decode.py file.iq --freq 5925 --force
 """
 import numpy as np
 import scipy.signal as sig
@@ -19,19 +21,11 @@ import argparse
 import os
 import time
 
-# NTSC constants
-NTSC_SAMPLES_PER_LINE = 508
 NTSC_LINES_PER_FRAME = 525
-NTSC_REFRESH_HZ = 30.0 / 1.001  # 29.97
-NTSC_LINE_HZ = NTSC_REFRESH_HZ * NTSC_LINES_PER_FRAME  # 15734.26
-
-# PAL constants
-PAL_SAMPLES_PER_LINE = 512
+NTSC_LINE_HZ = (30.0 / 1.001) * NTSC_LINES_PER_FRAME  # 15734.26
 PAL_LINES_PER_FRAME = 625
-PAL_REFRESH_HZ = 25.0
-PAL_LINE_HZ = PAL_REFRESH_HZ * PAL_LINES_PER_FRAME  # 15625
+PAL_LINE_HZ = 25.0 * PAL_LINES_PER_FRAME  # 15625
 
-# FPV CHANNEL PLANS
 FPV_CHANNELS = {
     '900mhz': {'band': '900 MHz', 'freqs': [910, 920, 930, 940, 950, 960]},
     '1.2ghz': {'band': '1.2 GHz', 'freqs': [1080, 1120, 1160, 1200, 1240, 1280]},
@@ -49,159 +43,261 @@ FPV_CHANNELS = {
 }
 
 
-def capture_iq_hackrf(freq_mhz, duration_s, sample_rate=10000000):
-    """Capture IQ using HackRF"""
-    import subprocess
-
-    num_bytes = int(sample_rate * duration_s * 2)
-    raw_file = '/tmp/fpv_capture.raw'
-
-    print("Capturing %ds at %d MHz (SR=%d MHz)..." % (duration_s, freq_mhz, sample_rate/1e6))
-
-    cmd = [
-        'hackrf_transfer', '-r', raw_file,
-        '-f', str(int(freq_mhz * 1e6)),
-        '-s', str(sample_rate),
-        '-n', str(num_bytes),
-        '-l', '32', '-g', '40', '-a', '1',
-    ]
-
-    r = subprocess.run(cmd, capture_output=True, timeout=duration_s + 15)
-
-    if not os.path.exists(raw_file) or os.path.getsize(raw_file) < 1024:
-        print("Capture failed!")
-        return None
-
-    raw = np.fromfile(raw_file, dtype=np.int8)
-    iq = raw[::2].astype(np.float32)/128 + 1j*raw[1::2].astype(np.float32)/128
-
-    print("Captured %d samples (%.1f ms)" % (len(iq), len(iq)/sample_rate*1000))
-
-    # Save IQ for redecoding
-    try:
-        ts = time.strftime("%Y%m%d_%H%M%S")
-        freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
-        iq_dir = os.path.expanduser('~/.rflord/iq_samples')
-        os.makedirs(iq_dir, exist_ok=True)
-        iq_path = os.path.join(iq_dir, f"{ts}_{freq_label}MHz.iq")
-        raw.tofile(iq_path)
-        print("Saved IQ sample: %s" % iq_path)
-    except Exception as e:
-        print("Could not save IQ: %s" % e)
-
-    return iq
-
-
 def load_iq_file(path, sample_rate=10000000):
     """Load IQ from file. Supports complex64 (GNU Radio/PySDR) and int8 (HackRF)."""
-    file_size = os.path.getsize(path)
+    ext = os.path.splitext(path)[1].lower()
 
-    # Try complex64 first (GNU Radio / PySDR format)
-    if file_size >= 8 and file_size % 8 == 0:
-        iq = np.fromfile(path, dtype=np.complex64)
-        if len(iq) > 0 and np.max(np.abs(iq)) < 1e6:
-            return iq
+    # Complex64 extensions: always complex64
+    if ext in ('.cf32', '.cfile'):
+        return np.fromfile(path, dtype=np.complex64)
 
-    # Fall back to int8 interleaved (HackRF format)
+    # .iq extension: could be either format. Detect by content.
+    if ext == '.iq':
+        # Read first 100 samples as complex64 and check magnitude
+        probe = np.fromfile(path, dtype=np.complex64, count=100)
+        if len(probe) > 0 and np.nanmax(np.abs(probe)) > 0.01:
+            return np.fromfile(path, dtype=np.complex64)
+
+    # Default: int8 interleaved (HackRF)
     raw = np.fromfile(path, dtype=np.int8)
     if len(raw) == 0:
         raw = np.fromfile(path, dtype=np.uint8)
-        iq = (raw[::2].astype(np.float32) - 127.5)/127.5 + \
-             1j*(raw[1::2].astype(np.float32) - 127.5)/127.5
+        iq = (raw[::2].astype(np.float32) - 127.5) / 127.5 + \
+             1j * (raw[1::2].astype(np.float32) - 127.5) / 127.5
     else:
-        iq = raw[::2].astype(np.float32)/128 + 1j*raw[1::2].astype(np.float32)/128
+        iq = raw[::2].astype(np.float32) / 128 + 1j * raw[1::2].astype(np.float32) / 128
+    return iq
+
+
+def capture_iq_hackrf(freq_mhz, duration_s, sample_rate=10000000):
+    """Capture IQ using HackRF."""
+    import subprocess
+    num_bytes = int(sample_rate * duration_s * 2)
+    raw_file = '/tmp/fpv_capture.raw'
+    print("Capturing %ds at %d MHz..." % (duration_s, freq_mhz))
+    cmd = ['hackrf_transfer', '-r', raw_file, '-f', str(int(freq_mhz * 1e6)),
+           '-s', str(sample_rate), '-n', str(num_bytes), '-l', '32', '-g', '40', '-a', '1']
+    subprocess.run(cmd, capture_output=True, timeout=duration_s + 15)
+    if not os.path.exists(raw_file) or os.path.getsize(raw_file) < 1024:
+        print("Capture failed!")
+        return None
+    raw = np.fromfile(raw_file, dtype=np.int8)
+    iq = raw[::2].astype(np.float32) / 128 + 1j * raw[1::2].astype(np.float32) / 128
+    print("Captured %d samples (%.1f ms)" % (len(iq), len(iq) / sample_rate * 1000))
+    try:
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        freq_label = ("%.1f" % freq_mhz).replace('.', 'p')
+        iq_dir = os.path.expanduser('~/.rflord/iq_samples')
+        os.makedirs(iq_dir, exist_ok=True)
+        iq_path = os.path.join(iq_dir, "%s_%sMHz.iq" % (ts, freq_label))
+        raw.tofile(iq_path)
+        print("Saved IQ: %s" % iq_path)
+    except Exception as e:
+        print("Could not save IQ: %s" % e)
     return iq
 
 
 def has_video_signal(iq, sample_rate):
-    """Check if IQ contains analog video by looking for line rate harmonics."""
+    """Check if IQ contains analog video (line rate harmonics)."""
     n = min(len(iq), int(sample_rate * 0.1))
     seg = iq[:n]
     d = np.angle(seg[1:] * np.conj(seg[:-1]))
-
     h = sig.firwin(301, 3e6, fs=sample_rate)
     d = np.convolve(d, h, 'same')
-
     f, psd = sig.welch(d, fs=sample_rate, nperseg=min(4096, len(d)))
     psd_db = 10 * np.log10(psd + 1e-20)
-
     for line_rate in [NTSC_LINE_HZ, PAL_LINE_HZ]:
         diffs = []
         for harmonic in [1, 2, 3, 4]:
             target = line_rate * harmonic
             idx = np.argmin(np.abs(f - target))
             lo = max(0, idx - 20)
-            noise = np.median(psd_db[max(0, lo-50):lo]) if lo > 50 else np.median(psd_db)
+            noise = np.median(psd_db[max(0, lo - 50):lo]) if lo > 50 else np.median(psd_db)
             diffs.append(psd_db[idx] - noise)
-        strong = sum(1 for p in diffs if p > 5)
-        if strong >= 2:
+        if sum(1 for p in diffs if p > 5) >= 2:
             return True
     return False
 
 
-def decode_frame(iq, sample_rate=10e6, standard='NTSC'):
-    """Decode FPV video using PySDR approach.
-    FM demod → filter audio → resample → reshape. No sync detection needed.
+def create_spectrogram(iq, sample_rate, fft_size=2048, height=500):
+    """Create spectrogram image."""
+    num_ffts = min(len(iq) // fft_size, height)
+    wf = np.zeros((num_ffts, fft_size))
+    for i in range(num_ffts):
+        chunk = iq[i * fft_size:(i + 1) * fft_size]
+        wf[i] = 20 * np.log10(np.abs(np.fft.fftshift(np.fft.fft(chunk * np.hanning(fft_size)))) + 1e-10)
+    wfn = (wf - wf.min()) / (wf.max() - wf.min() + 1e-10)
+    rgb = np.zeros((num_ffts, fft_size, 3), dtype=np.uint8)
+    rgb[:, :, 0] = (wfn * 76).astype(np.uint8)
+    rgb[:, :, 1] = (wfn * 255).astype(np.uint8)
+    rgb[:, :, 2] = (wfn * 128).astype(np.uint8)
+    return Image.fromarray(rgb, 'RGB').resize((720, height), Image.BILINEAR)
 
-    Reference: https://pysdr.org/content/fpv_video.html
-    """
-    if standard == 'PAL':
-        samples_per_line = PAL_SAMPLES_PER_LINE
-        lines_per_frame = PAL_LINES_PER_FRAME
-        line_hz = PAL_LINE_HZ
-    else:
-        samples_per_line = NTSC_SAMPLES_PER_LINE
-        lines_per_frame = NTSC_LINES_PER_FRAME
-        line_hz = NTSC_LINE_HZ
 
-    # FM demodulation (complex conjugate — standard SDR)
-    iq = iq - np.mean(iq)  # DC removal
-    x_demod = np.angle(iq[1:] * np.conj(iq[:-1]))
+# ─── DECODE METHODS ──────────────────────────────────────────────────────────
 
-    # Filter out audio subcarrier (3 MHz cutoff)
-    h = sig.firwin(301, 3e6, fs=sample_rate)
-    x_demod = np.convolve(x_demod, h, 'same')
+def _pysdr_decode(x, sample_rate, line_hz, pixels_per_line, max_lines, drift):
+    """PySDR approach: fixed resample rate + reshape."""
+    rate = pixels_per_line / (sample_rate / line_hz) * drift
+    xr = sig.resample(x, int(len(x) * rate))
+    xr = xr[:len(xr) - (len(xr) % pixels_per_line)]
+    frame = xr.reshape(-1, pixels_per_line)
+    return frame[:max_lines]
 
-    # Resample to exactly samples_per_line per horizontal line
-    resampling_rate = samples_per_line / (sample_rate / line_hz)
-    resampling_rate *= 1.00003  # drift correction (SDR clock offset)
-    x_demod = sig.resample(x_demod, int(len(x_demod) * resampling_rate))
 
-    # Trim to multiple of samples_per_line
-    x_demod = x_demod[:len(x_demod) - (len(x_demod) % samples_per_line)]
+def _frame_score(frame):
+    """Score a decoded frame: higher = more structure (less noise).
+    Uses row-to-row variance which is high for real video, low for noise."""
+    if frame is None or frame.shape[0] < 10:
+        return 0
+    row_means = np.mean(frame, axis=1)
+    return float(np.var(row_means))
 
-    # Reshape into 2D image
-    frame = x_demod.reshape(-1, samples_per_line)
 
-    # Take first field (half frame)
-    frame = frame[:lines_per_frame // 2]
+def _sync_decode(x, sample_rate, line_hz, pixels_per_line, max_lines):
+    """Sync-based decoder with flywheel PLL and per-line TBC."""
+    spl = sample_rate / line_hz
+
+    # Find sync tips: local minima below threshold
+    med = np.median(x)
+    mad = np.median(np.abs(x - med))
+    threshold = med - 1.5 * mad
+
+    below = x < threshold
+    falling = np.where(np.diff(below.astype(int)) == 1)[0] + 1
+    if len(falling) < 5:
+        return None
+
+    # Filter by expected interval
+    raw_syncs = []
+    last = -spl * 2
+    for pos in falling:
+        if pos - last > spl * 0.7:
+            raw_syncs.append(pos)
+            last = pos
+    if len(raw_syncs) < 5:
+        return None
+
+    actual_period = np.median(np.diff(raw_syncs))
+
+    # Flywheel
+    clean = [raw_syncs[0]]
+    miss = 0
+    ri = 1
+    for _ in range(max_lines * 2):
+        expected = clean[-1] + actual_period
+        best_dist = actual_period * 0.2
+        best_pos = None
+        while ri < len(raw_syncs) and raw_syncs[ri] < expected + actual_period * 0.5:
+            dist = abs(raw_syncs[ri] - expected)
+            if dist < best_dist:
+                best_dist = dist
+                best_pos = raw_syncs[ri]
+            ri += 1
+        if best_pos is not None:
+            clean.append(best_pos)
+            miss = 0
+        else:
+            clean.append(int(expected))
+            miss += 1
+            if miss > 5:
+                break
+
+    if len(clean) < 10:
+        return None
+
+    clean = np.array(clean)
+
+    # Find VBI
+    gaps = np.diff(clean)
+    vbi_idx = 0
+    for i in range(len(gaps)):
+        if gaps[i] > actual_period * 1.8:
+            vbi_idx = i + 1
+            break
+
+    start_line = min(vbi_idx + 20, len(clean) - 2)
+    num_lines = min(max_lines, len(clean) - start_line - 1)
+    if num_lines < 5:
+        return None
+
+    frame = np.zeros((num_lines, pixels_per_line))
+    for li in range(num_lines):
+        idx = start_line + li
+        s = int(clean[idx])
+        e = int(clean[idx + 1])
+        if e <= s or e - s < actual_period * 0.3 or e - s > actual_period * 2:
+            continue
+        s, e = max(0, s), min(len(x), e)
+        line = x[s:e]
+        if len(line) < 10:
+            continue
+        frame[li, :] = sig.resample(line, pixels_per_line)
 
     return frame
 
 
+def decode_frame(iq, sample_rate=10e6, standard='NTSC', pixels_per_line=720):
+    """Decode FPV video. Tries PySDR with multiple drift rates, picks best.
+    Falls back to sync-based if PySDR produces noise."""
+    if standard == 'PAL':
+        lines_per_frame = PAL_LINES_PER_FRAME
+        line_hz = PAL_LINE_HZ
+    else:
+        lines_per_frame = NTSC_LINES_PER_FRAME
+        line_hz = NTSC_LINE_HZ
+
+    max_lines = lines_per_frame // 2
+
+    # FM demodulation
+    iq = iq - np.mean(iq)
+    x = np.angle(iq[1:] * np.conj(iq[:-1]))
+
+    # Low-pass filter
+    b = sig.firwin(301, 4.0e6, fs=sample_rate)
+    x = np.convolve(b, x, 'same')
+
+    # ── Try PySDR with multiple drift corrections ──
+    best_frame = None
+    best_score = 0
+    best_method = "none"
+
+    for drift in [1.0, 1.00003, 0.99997, 1.0001, 0.9999, 1.0003, 0.9997]:
+        try:
+            frame = _pysdr_decode(x, sample_rate, line_hz, pixels_per_line, max_lines, drift)
+            score = _frame_score(frame)
+            if score > best_score:
+                best_score = score
+                best_frame = frame
+                best_method = "pysdr_%.5f" % drift
+        except Exception:
+            pass
+
+    # ── Try sync-based decoder ──
+    try:
+        sync_frame = _sync_decode(x, sample_rate, line_hz, pixels_per_line, max_lines)
+        sync_score = _frame_score(sync_frame)
+        if sync_score > best_score:
+            best_score = sync_score
+            best_frame = sync_frame
+            best_method = "sync"
+    except Exception:
+        pass
+
+    if best_frame is not None:
+        print("  method: %s, score: %.1f, frame: %s" % (best_method, best_score, best_frame.shape))
+
+    return best_frame
+
+
 def normalize_frame(frame):
-    """Normalize to 0-255 using percentile (robust against outliers)."""
-    p2 = np.percentile(frame, 2)
-    p98 = np.percentile(frame, 98)
-    if p98 - p2 < 1e-10:
+    """Normalize to 0-255 using min-max (matches PySDR)."""
+    if frame is None or frame.size == 0:
+        return np.zeros((100, 720), dtype=np.uint8)
+    mn, mx = np.min(frame), np.max(frame)
+    if mx - mn < 1e-10:
         return np.zeros_like(frame, dtype=np.uint8)
-    f = (frame - p2) / (p98 - p2)
-    return (np.clip(f, 0, 1) * 255).astype(np.uint8)
-
-
-def create_spectrogram(iq, sample_rate, fft_size=2048, height=500):
-    """Create spectrogram image"""
-    num_ffts = min(len(iq) // fft_size, height)
-    wf = np.zeros((num_ffts, fft_size))
-    for i in range(num_ffts):
-        chunk = iq[i*fft_size:(i+1)*fft_size]
-        wf[i] = 20*np.log10(np.abs(np.fft.fftshift(np.fft.fft(chunk*np.hanning(fft_size))))+1e-10)
-    wfn = (wf-wf.min())/(wf.max()-wf.min()+1e-10)
-    rgb = np.zeros((num_ffts, fft_size, 3), dtype=np.uint8)
-    rgb[:,:,0] = (wfn*76).astype(np.uint8)
-    rgb[:,:,1] = (wfn*255).astype(np.uint8)
-    rgb[:,:,2] = (wfn*128).astype(np.uint8)
-    return Image.fromarray(rgb, 'RGB').resize((720, height), Image.BILINEAR)
+    return ((frame - mn) / (mx - mn) * 255).astype(np.uint8)
 
 
 def main():
@@ -214,6 +310,7 @@ def main():
     parser.add_argument('--sample-rate', type=int, default=10000000)
     parser.add_argument('--list-channels', action='store_true')
     parser.add_argument('--force', action='store_true', help='Skip video validation')
+    parser.add_argument('--width', type=int, default=720, help='Output width in pixels')
     args = parser.parse_args()
 
     if args.list_channels:
@@ -227,7 +324,6 @@ def main():
                 print("    %s MHz" % ', '.join(str(x) for x in freqs))
         return
 
-    # Get IQ data
     if args.input == 'capture' or args.input is None:
         if not args.freq:
             print("ERROR: --freq required for capture")
@@ -237,41 +333,44 @@ def main():
             return
         sample_rate = args.sample_rate
     else:
-        print("Loading IQ from %s..." % args.input)
+        print("Loading %s..." % args.input)
         iq = load_iq_file(args.input, args.sample_rate)
         sample_rate = args.sample_rate
-        print("Loaded %d samples (%.1f ms)" % (len(iq), len(iq)/sample_rate*1000))
+        print("Loaded %d samples (%.1f ms)" % (len(iq), len(iq) / sample_rate * 1000))
 
-    # Validate video signal (unless --force)
     if not args.force:
         print("Checking for video signal...")
         if not has_video_signal(iq, sample_rate):
-            print("NO VIDEO SIGNAL DETECTED — saving spectrogram")
-            spec = create_spectrogram(iq, sample_rate)
-            spec.save(args.output.replace('.png', '_no_video.png'))
-            print("Saved: %s" % args.output.replace('.png', '_no_video.png'))
+            print("NO VIDEO SIGNAL — saving spectrogram")
+            out = args.output.replace('.png', '_no_video.png')
+            create_spectrogram(iq, sample_rate).save(out)
+            print("Saved: %s" % out)
             sys.exit(2)
-        print("Video signal detected — decoding...")
+        print("Video signal detected!")
 
-    # Use subset for speed (first 500K samples = 50ms, ~15 frames)
-    n = min(len(iq), 500000)
-    iq_subset = iq[:n]
-
-    # Decode
     print("Decoding %s..." % args.standard)
-    frame = decode_frame(iq_subset, sample_rate, args.standard)
-    frame_norm = normalize_frame(frame)
+    # Limit input to 2M samples (200ms) for speed
+    if len(iq) > 2000000:
+        iq = iq[:2000000]
+        print("  (trimmed to 2M samples for speed)")
+    frame = decode_frame(iq, sample_rate, args.standard, args.width)
 
-    # Save grayscale
-    img = Image.fromarray(frame_norm, mode='L')
-    img.save(args.output)
+    if frame is None or frame.shape[0] < 5:
+        print("DECODE FAILED — no video found")
+        out = args.output.replace('.png', '_no_video.png')
+        create_spectrogram(iq, sample_rate).save(out)
+        print("Saved: %s" % out)
+        sys.exit(3)
+
+    frame_norm = normalize_frame(frame)
+    Image.fromarray(frame_norm, mode='L').save(args.output)
     print("Saved: %s (%dx%d)" % (args.output, frame_norm.shape[1], frame_norm.shape[0]))
 
-    # Save green phosphor version
+    # Green phosphor version
     rgb = np.zeros((frame_norm.shape[0], frame_norm.shape[1], 3), dtype=np.uint8)
-    rgb[:,:,0] = (frame_norm * 0.2).astype(np.uint8)
-    rgb[:,:,1] = frame_norm
-    rgb[:,:,2] = (frame_norm * 0.3).astype(np.uint8)
+    rgb[:, :, 0] = (frame_norm * 0.2).astype(np.uint8)
+    rgb[:, :, 1] = frame_norm
+    rgb[:, :, 2] = (frame_norm * 0.3).astype(np.uint8)
     green_path = args.output.replace('.png', '_green.png')
     Image.fromarray(rgb, 'RGB').save(green_path)
     print("Saved: %s" % green_path)
