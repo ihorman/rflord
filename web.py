@@ -5,7 +5,10 @@ import threading
 import time
 import os
 import sqlite3
+import logging
 from flask import Flask, Response, jsonify, render_template
+
+log = logging.getLogger('rflord.web')
 
 DASHBOARD_HTML = r"""<!DOCTYPE html>
 <html lang="en">
