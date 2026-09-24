@@ -2078,26 +2078,29 @@ def main_curses(stdscr, devices):
     accel = ScanAccelerator(_cfg.get('scan_acceleration', {}).get('skip_after_empty', 3)) if _cfg.get('scan_acceleration', {}).get('enabled', False) else None
     web_dash = None
     web_url = None
+    web_port = _cfg.get('web', {}).get('port', 8080)
+    # Always determine the URL for display
+    try:
+        import socket
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        web_url = f"http://{ip}:{web_port}"
+    except:
+        web_url = f"http://localhost:{web_port}"
     if _cfg.get('web', {}).get('enabled', False):
         try:
             from web import WebDashboard
-            web_port = _cfg['web']['port']
             web_dash = WebDashboard(port=web_port)
             web_dash.start()
-            # Get device IP for URL display
-            try:
-                import socket
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
-                s.close()
-                web_url = f"http://{ip}:{web_port}"
-            except:
-                web_url = f"http://localhost:{web_port}"
             status.append(f"Web Dashboard: {web_url}")
             log.info(f"Web dashboard: {web_url}")
         except Exception as e:
+            status.append(f"Web Dashboard: {web_url} (failed: {e})")
             log.warning(f"Web dashboard failed: {e}")
+    else:
+        status.append(f"Web Dashboard: disabled")
     # State persistence
     state_file = os.path.expanduser('~/.local/share/rflord/state.json')
     os.makedirs(os.path.dirname(state_file), exist_ok=True)
