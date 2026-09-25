@@ -2304,7 +2304,11 @@ def main_curses(stdscr, devices):
                 threads.append(t)
                 t.start()
             # Poll threads — draw status and read keys while scanning
+            scan_start = time.time()
             while any(t.is_alive() for t in threads):
+                if time.time() - scan_start > 120:
+                    log.warning("Dual-SDR scan timeout after 120s")
+                    break
                 if _scan_status:
                     try:
                         stdscr.addstr(0, 0, _scan_status.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
@@ -2328,13 +2332,21 @@ def main_curses(stdscr, devices):
                 # Run sweep in background thread so we can poll keys
                 sweep_result = [None]
                 def _sweep_worker():
-                    if device == "rtlsdr":
-                        sweep_result[0] = rtlsdr_sweep(f_lo, f_hi)
-                    else:
-                        sweep_result[0] = hackrf_sweep(f_lo, f_hi, bw, n)
+                    try:
+                        if device == "rtlsdr":
+                            sweep_result[0] = rtlsdr_sweep(f_lo, f_hi)
+                        else:
+                            sweep_result[0] = hackrf_sweep(f_lo, f_hi, bw, n)
+                    except Exception as e:
+                        log.warning(f"Sweep worker error: {e}")
+                        sweep_result[0] = ""
                 t = threading.Thread(target=_sweep_worker, daemon=True)
                 t.start()
+                sweep_start = time.time()
                 while t.is_alive():
+                    if time.time() - sweep_start > 60:
+                        log.warning(f"Sweep timeout after 60s: {f_lo}-{f_hi} MHz")
+                        break
                     key = _read_key(stdscr)
                     if key == 'quit':
                         _suppress_stop()
