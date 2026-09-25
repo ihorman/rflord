@@ -238,8 +238,14 @@ def _sync_decode(x, sample_rate, line_hz, pixels_per_line, max_lines):
 
 
 def decode_frame(iq, sample_rate=10e6, standard='NTSC', pixels_per_line=720):
-    """Decode FPV video. Tries PySDR with multiple drift rates, picks best.
-    Falls back to sync-based if PySDR produces noise."""
+    """Decode FPV video using autocorrelation-based line detection.
+
+    1. FM demod
+    2. Low-pass filter (remove audio)
+    3. Autocorrelation to find line rate period
+    4. Extract lines at detected period
+    5. Resample each line to fixed pixel count
+    """
     if standard == 'PAL':
         lines_per_frame = PAL_LINES_PER_FRAME
         line_hz = PAL_LINE_HZ
@@ -247,47 +253,87 @@ def decode_frame(iq, sample_rate=10e6, standard='NTSC', pixels_per_line=720):
         lines_per_frame = NTSC_LINES_PER_FRAME
         line_hz = NTSC_LINE_HZ
 
-    max_lines = lines_per_frame // 2
+    expected_period = sample_rate / line_hz  # e.g. 635.6 samples at 10 MHz
 
     # FM demodulation
     iq = iq - np.mean(iq)
     x = np.angle(iq[1:] * np.conj(iq[:-1]))
 
-    # Low-pass filter
+    # Low-pass filter (remove audio at 4.5+ MHz)
     b = sig.firwin(301, 4.0e6, fs=sample_rate)
     x = np.convolve(b, x, 'same')
 
-    # ── Try PySDR with multiple drift corrections ──
-    best_frame = None
-    best_score = 0
-    best_method = "none"
+    max_lines = lines_per_frame // 2
 
-    for drift in [1.0, 1.00003, 0.99997, 1.0001, 0.9999, 1.0003, 0.9997]:
-        try:
-            frame = _pysdr_decode(x, sample_rate, line_hz, pixels_per_line, max_lines, drift)
-            score = _frame_score(frame)
-            if score > best_score:
-                best_score = score
-                best_frame = frame
-                best_method = "pysdr_%.5f" % drift
-        except Exception:
-            pass
+    # ── Find line rate via autocorrelation (FFT-based for speed) ──
+    seg_len = min(len(x), int(sample_rate * 0.05))  # 50ms segment
+    seg = x[:seg_len]
+    seg_centered = seg - np.mean(seg)
+    # FFT-based autocorrelation (O(n log n) vs O(n²) for direct)
+    n = len(seg_centered)
+    fft_seg = np.fft.rfft(seg_centered, n=2*n)
+    autocorr = np.fft.irfft(fft_seg * np.conj(fft_seg))[:n]
+    autocorr = autocorr / autocorr[0]  # Normalize
 
-    # ── Try sync-based decoder ──
-    try:
-        sync_frame = _sync_decode(x, sample_rate, line_hz, pixels_per_line, max_lines)
-        sync_score = _frame_score(sync_frame)
-        if sync_score > best_score:
-            best_score = sync_score
-            best_frame = sync_frame
-            best_method = "sync"
-    except Exception:
-        pass
+    # Search for peak near expected line period (±20%)
+    search_lo = int(expected_period * 0.8)
+    search_hi = int(expected_period * 1.2)
+    if search_hi >= len(autocorr):
+        search_hi = len(autocorr) - 1
+    if search_lo >= search_hi:
+        return None
 
-    if best_frame is not None:
-        print("  method: %s, score: %.1f, frame: %s" % (best_method, best_score, best_frame.shape))
+    search_region = autocorr[search_lo:search_hi]
+    if len(search_region) == 0:
+        return None
 
-    return best_frame
+    peak_offset = np.argmax(search_region)
+    detected_period = search_lo + peak_offset
+    peak_value = autocorr[detected_period]
+
+    print("  autocorr: expected=%.1f detected=%.1f peak=%.3f" % (
+        expected_period, detected_period, peak_value))
+
+    if peak_value < 0.03:
+        print("  autocorr peak too weak — no video")
+        return None
+
+    # ── Extract lines using autocorrelation period directly ──
+    # No sync detection needed — autocorrelation gives exact period
+    period = detected_period
+    num_lines = min(max_lines, len(x) // int(period))
+    if num_lines < 5:
+        return None
+
+    # Find best starting offset by trying a few and picking highest variance
+    # (real video has varying brightness, noise is uniform)
+    best_offset = 0
+    best_var = 0
+    for offset in range(0, int(period), int(period // 4)):
+        sample = []
+        for li in range(min(20, num_lines)):
+            start = offset + int(li * period)
+            end = start + int(period)
+            if end > len(x):
+                break
+            sample.append(np.mean(np.abs(x[start:end])))
+        var = np.var(sample) if len(sample) > 1 else 0
+        if var > best_var:
+            best_var = var
+            best_offset = offset
+
+    # Extract and resample each line
+    frame = np.zeros((num_lines, pixels_per_line))
+    for li in range(num_lines):
+        start = best_offset + int(li * period)
+        end = best_offset + int((li + 1) * period)
+        if end > len(x):
+            break
+        line = x[start:end]
+        if len(line) > 0:
+            frame[li, :] = sig.resample(line, pixels_per_line)
+
+    return frame
 
 
 def normalize_frame(frame):
