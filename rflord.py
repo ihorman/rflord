@@ -2643,20 +2643,31 @@ def main_curses(stdscr, devices):
             main_curses._last_voice = {}
         VOICE_COOLDOWN = 60  # seconds between captures of same frequency
 
-        # Record events for ALL suspicious signals
+        # Record events for ACTUAL drone/camera signals only
         if web_dash and not hasattr(main_curses, '_last_spy_event'):
             main_curses._last_spy_event = {}
         SPY_EVENT_COOLDOWN = 300  # 5 min between events for same frequency
         if web_dash:
             for s in unique:
                 f = s['freq'] / 1e6
-                cls = classify(f, s['peak'], s['std'])
-                if cls not in ('sus', 'danger'):
+                sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                sig_lower = sig_type.lower()
+                # Only record events for actual drone/camera signals
+                is_drone_cam = False
+                drone_cam_keywords = ['orlan', 'zala', 'lancet', 'eleron', 'supercam', 
+                                      'dji', 'mavic', 'fpv', 'camera', 'spy', 'hidden',
+                                      'covert', 'expresslrs', 'elrs', 'tbs crossfire',
+                                      'tracer', 'hdzero', 'walksnail', 'caddx']
+                if any(kw in sig_lower for kw in drone_cam_keywords):
+                    is_drone_cam = True
+                # Also check Tsukorok drone bands
+                if 865 <= f <= 885 or 902 <= f <= 928 or 970 <= f <= 1020:
+                    is_drone_cam = True
+                if not is_drone_cam:
                     continue
                 spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                # Use spy device name if available, otherwise use signal type
-                device_name = spy_name or get_signal_type(f, 0, 0, s['std'], artemis_db)
-                threat_level = threat if threat is not None else (0 if cls == 'danger' else 2)
+                device_name = spy_name or sig_type
+                threat_level = threat if threat is not None else (0 if classify(f, s['peak'], s['std']) == 'danger' else 2)
                 freq_key = round(f)
                 last_evt = main_curses._last_spy_event.get(freq_key, 0)
                 if now_ts - last_evt < SPY_EVENT_COOLDOWN:
