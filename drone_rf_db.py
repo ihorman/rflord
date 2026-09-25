@@ -13,7 +13,32 @@ Sources:
 
 # Drone RF signatures: (freq_low_mhz, freq_high_mhz, bandwidth_khz, modulation, name, description)
 DRONE_SIGNATURES = [
-    # === DJI Digital Video Links ===
+    # === Russian Military Drones (Tsukorok-detected) ===
+    # Orlan-10 telemetry — primary Russian recon drone
+    (865, 885, 50, "FM", "Orlan-10 TLM", "Orlan-10 telemetry — 865-885 MHz, narrow FM, 8-16km range"),
+    (902, 928, 50, "FM", "Orlan-10 TLM", "Orlan-10 telemetry — 902-928 MHz, narrow FM"),
+    (970, 1020, 50, "FM", "Orlan-10 TLM", "Orlan-10 telemetry — 970-1020 MHz, narrow FM"),
+
+    # Zala series (Zala 421-16, Zala Lancet)
+    (902, 928, 100, "FM", "Zala TLM", "Zala series telemetry — 902-928 MHz"),
+    (970, 1020, 100, "FM", "Zala TLM", "Zala series telemetry — 970-1020 MHz"),
+
+    # Lancet loitering munition (control link from Zala)
+    (902, 928, 200, "FHSS", "Lancet CTL", "Lancet loitering munition control — 902-928 MHz"),
+    (970, 1020, 200, "FHSS", "Lancet CTL", "Lancet control — 970-1020 MHz"),
+
+    # Eleron-3 recon drone
+    (865, 885, 50, "FM", "Eleron TLM", "Eleron-3 telemetry — 865-885 MHz"),
+    (902, 928, 50, "FM", "Eleron TLM", "Eleron-3 telemetry — 902-928 MHz"),
+    (970, 1020, 50, "FM", "Eleron TLM", "Eleron-3 telemetry — 970-1020 MHz"),
+
+    # SuperCam recon drone
+    (865, 885, 50, "FM", "SuperCam TLM", "SuperCam telemetry — 865-885 MHz"),
+    (902, 928, 50, "FM", "SuperCam TLM", "SuperCam telemetry — 902-928 MHz"),
+
+    # === DJI Mavic Detection (2.4 GHz) ===
+    # DJI OcuSync/O3/O4 — detected by Tsukorok Vanilla on 2.4 GHz
+    (2400, 2500, 20000, "OFDM", "DJI Mavic", "DJI Mavic/OcuSync — 2.4 GHz, detectable 150-400m"),
     # OcuSync 1.0 (Mavic Pro, Spark, Mavic Air)
     (2400, 2483, 10000, "FHSS", "DJI OcuSync 1.0", "Mavic Pro/Spark/Mavic Air — encrypted FHSS, 2.4 GHz"),
     (5725, 5850, 10000, "FHSS", "DJI OcuSync 1.0", "Mavic Pro/Spark/Mavic Air — encrypted FHSS, 5.8 GHz"),

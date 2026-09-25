@@ -1527,6 +1527,15 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
                     return name[:20]
     except: pass
     
+    # === STEP 3b: Drone RF database (Tsukorok bands) ===
+    try:
+        from drone_rf_db import match_drone
+        drone_matches = match_drone(freq_mhz, bw)
+        if drone_matches:
+            name = drone_matches[0][1]  # Best match name
+            return name[:20]
+    except: pass
+    
     # === STEP 4: rf_protocols (fallback — only if no band matched) ===
     try:
         from rf_protocols import identify_by_freq
