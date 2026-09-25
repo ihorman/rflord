@@ -294,8 +294,8 @@ def decode_frame(iq, sample_rate=10e6, standard='NTSC', pixels_per_line=720):
     print("  autocorr: expected=%.1f detected=%.1f peak=%.3f" % (
         expected_period, detected_period, peak_value))
 
-    if peak_value < 0.03:
-        print("  autocorr peak too weak — no video")
+    if peak_value < 0.2:
+        print("  autocorr peak too weak (%.3f < 0.2) — no video" % peak_value)
         return None
 
     # ── Extract lines using autocorrelation period directly ──
