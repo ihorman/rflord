@@ -2325,22 +2325,30 @@ def main_curses(stdscr, devices):
             for sigs in results.values():
                 all_signals.extend(sigs)
         else:
-            # Single SDR — sequential scan
+            # Single SDR — sequential scan with key polling
             for bi, (f_lo, f_hi, bw, n) in enumerate(scan_bands):
                 try:
                     status_line = f" Scanning {f_lo}-{f_hi} MHz ({bi+1}/{len(scan_bands)})... "
                     stdscr.addstr(0, 0, status_line.ljust(w-1), curses.color_pair(CP_HEADER) | curses.A_BOLD)
                     stdscr.refresh()
                 except: pass
-                key = _read_key(stdscr)
-                if key == 'quit':
-                    _suppress_stop()
-                    return
-                if device == "rtlsdr":
-                    output = rtlsdr_sweep(f_lo, f_hi)
-                else:
-                    output = hackrf_sweep(f_lo, f_hi, bw, n)
-                all_signals.extend(parse_sweep(output))
+                # Run sweep in background thread so we can poll keys
+                sweep_result = [None]
+                def _sweep_worker():
+                    if device == "rtlsdr":
+                        sweep_result[0] = rtlsdr_sweep(f_lo, f_hi)
+                    else:
+                        sweep_result[0] = hackrf_sweep(f_lo, f_hi, bw, n)
+                t = threading.Thread(target=_sweep_worker, daemon=True)
+                t.start()
+                while t.is_alive():
+                    key = _read_key(stdscr)
+                    if key == 'quit':
+                        _suppress_stop()
+                        return
+                    time.sleep(0.05)
+                if sweep_result[0]:
+                    all_signals.extend(parse_sweep(sweep_result[0]))
         
         seen = {}
         unique = []
