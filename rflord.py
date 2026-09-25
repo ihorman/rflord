@@ -1486,8 +1486,11 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     # FM Radio
     if 88 <= freq_mhz <= 108: return "FM Radio"
     
+    # Military (before DAB — 225-400 overlaps with DAB 174-230)
+    if 225 <= freq_mhz <= 400: return "Mil UHF"
+
     # DAB/DVB-T
-    if 174 <= freq_mhz <= 230: return "DAB/DVB-T"
+    if 174 <= freq_mhz <= 224: return "DAB/DVB-T"
     if 470 <= freq_mhz <= 790:
         if std > 3: return "DVB-T2"
         elif std < 2: return "DVB-T2/Narrow"
@@ -1508,10 +1511,7 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if 430 <= freq_mhz <= 470: return "70cm/PMR"
     if 446 <= freq_mhz <= 447: return "PMR446"
     if 462 <= freq_mhz <= 468: return "FRS/GMRS"
-    
-    # Military
-    if 225 <= freq_mhz <= 400: return "Mil UHF"
-    
+
     # === STEP 3: Signatures DB (non-surveillance) ===
     try:
         from signatures_db import SignaturesDB
@@ -1541,17 +1541,10 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if std < 1.5:
         return "CW/Carrier"
     elif std < 2.5:
-        # Narrowband modulated — likely voice or control
-        if power > -40:
-            return "Narrowband/Near"
         return "Narrowband"
     elif std < 4:
-        # Medium bandwidth — could be wideband voice or data
-        if power > -40:
-            return "Wideband/Near"
         return "Wideband"
     else:
-        # Wideband/modulated — likely digital or noise
         return "Wideband/Digital"
 
 def ensure_decoded_dir():
