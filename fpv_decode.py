@@ -346,18 +346,24 @@ def is_recognizable(frame_norm):
     # 3. Brightness variance (real video: std > 15, noise: ~40-74)
     brightness_std = np.std(f)
 
-    # Decision: ALL three metrics must indicate video content
-    has_correlation = avg_corr > 0.15
-    has_edges = 0.02 < edge_ratio < 0.7
-    has_variance = brightness_std > 10
+    # Decision: require 2 of 3 metrics (real video may have some noise)
+    checks_passed = 0
+    if avg_corr > 0.10:
+        checks_passed += 1
+    if 0.01 < edge_ratio < 0.8:
+        checks_passed += 1
+    if brightness_std > 8:
+        checks_passed += 1
+
+    passed = checks_passed >= 2
 
     # Debug info
-    print("  quality: corr=%.3f edge_ratio=%.3f bright_std=%.1f %s" % (
-        avg_corr, edge_ratio, brightness_std,
-        "PASS" if (has_correlation and has_edges and has_variance) else "FAIL"
+    print("  quality: corr=%.3f edge_ratio=%.3f bright_std=%.1f checks=%d/3 %s" % (
+        avg_corr, edge_ratio, brightness_std, checks_passed,
+        "PASS" if passed else "FAIL"
     ))
 
-    return has_correlation and has_edges and has_variance
+    return passed
 
 
 # ─── AUDIO DECODER ───────────────────────────────────────────────────────────

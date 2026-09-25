@@ -1649,20 +1649,22 @@ def is_voice_signal(freq_mhz, std, sig_type=""):
     return False
 
 def is_camera_signal(freq_mhz, std, sig_type=""):
-    """Check if signal is a hidden camera or FPV video transmitter."""
+    """Check if signal could be a hidden camera or FPV video transmitter.
+    Always attempt decode for signals in known video bands — the quality
+    gate (is_recognizable) will reject noise."""
     # By signal type label
     sig_lower = sig_type.lower()
     camera_keywords = ["cam", "fpv", "spy", "hidden", "covert", "video link", "analog fpv"]
     if any(kw in sig_lower for kw in camera_keywords):
         return True
-    # By frequency + low std (narrowband continuous carrier = video TX)
-    if std < 3:
-        if 900 <= freq_mhz <= 928: return True
-        if 1080 <= freq_mhz <= 1300: return True
-        if 1200 <= freq_mhz <= 1400: return True
-        if 470 <= freq_mhz <= 790: return True
-        if 5725 <= freq_mhz <= 5875: return True
-        if 2410 <= freq_mhz <= 2483: return True
+    # By frequency — always attempt decode in known video bands
+    # Quality gate (is_recognizable) will reject non-video signals
+    if 900 <= freq_mhz <= 928: return True
+    if 1080 <= freq_mhz <= 1300: return True
+    if 1200 <= freq_mhz <= 1400: return True
+    if 470 <= freq_mhz <= 790: return True
+    if 5725 <= freq_mhz <= 5875: return True
+    if 2410 <= freq_mhz <= 2483: return True
     return False
 
 def is_critical_signal(freq_mhz, power_dbfs, std, sig_type=""):
