@@ -360,6 +360,105 @@ def is_recognizable(frame_norm):
     return has_correlation and has_edges and has_variance
 
 
+# ─── AUDIO DECODER ───────────────────────────────────────────────────────────
+
+def decode_audio(iq, sample_rate=10e6, standard='NTSC', output_path=None):
+    """Decode audio from analog TV/FPV IQ capture.
+
+    Audio subcarrier is FM-modulated at 4.5-6.5 MHz offset from video carrier.
+    Pipeline: bandpass filter → FM demod → de-emphasis → resample to 48kHz → WAV.
+
+    Returns: numpy array of audio samples at 48kHz, or None if no audio found.
+    """
+    if standard == 'PAL':
+        audio_offset = 5.5e6  # PAL audio at 5.5 MHz offset
+        deemph_tau = 50e-6    # 50us de-emphasis
+    else:
+        audio_offset = 4.5e6  # NTSC audio at 4.5 MHz offset
+        deemph_tau = 75e-6    # 75us de-emphasis
+
+    # ── STAGE 1: Bandpass filter around audio subcarrier ──
+    # The audio is at +/- audio_offset from center, but since we're at baseband,
+    # it appears at audio_offset in the spectrum.
+    # Use a narrow bandpass (~200 kHz bandwidth for FM audio)
+    audio_bw = 200e3  # FM audio bandwidth
+    f_lo = audio_offset - audio_bw
+    f_hi = audio_offset + audio_bw
+
+    # Ensure filter frequencies are within valid range
+    nyq = sample_rate / 2
+    if f_hi >= nyq:
+        # Audio subcarrier is above Nyquist — aliased
+        # Try aliased frequency
+        f_hi_aliased = sample_rate - f_hi
+        f_lo_aliased = sample_rate - f_lo
+        if f_lo_aliased > 0 and f_hi_aliased < nyq:
+            f_lo, f_hi = f_lo_aliased, f_hi_aliased
+            print("  audio: aliased to %.1f-%.1f kHz" % (f_lo/1e3, f_hi/1e3))
+        else:
+            print("  audio: subcarrier above Nyquist, cannot decode")
+            return None
+
+    try:
+        b = sig.firwin(301, [f_lo, f_hi], fs=sample_rate, pass_zero=False)
+    except ValueError:
+        print("  audio: invalid filter params")
+        return None
+
+    # Apply bandpass filter to raw IQ (before FM demod!)
+    iq_bp = sig.lfilter(b, 1.0, iq)
+
+    # ── STAGE 2: FM demodulate the audio subcarrier ──
+    audio_raw = np.angle(iq_bp[1:] * np.conj(iq_bp[:-1]))
+
+    # ── STAGE 3: De-emphasis filter ──
+    # Single-pole IIR: H(s) = 1/(1 + s*tau)
+    # Digital: y[n] = alpha * x[n] + (1-alpha) * y[n-1]
+    # where alpha = 1 - exp(-1/(tau * sample_rate))
+    alpha = 1.0 - np.exp(-1.0 / (deemph_tau * sample_rate))
+    audio_deemph = np.zeros_like(audio_raw)
+    audio_deemph[0] = audio_raw[0]
+    for i in range(1, len(audio_raw)):
+        audio_deemph[i] = alpha * audio_raw[i] + (1 - alpha) * audio_deemph[i - 1]
+
+    # ── STAGE 4: Decimate to 48kHz ──
+    target_rate = 48000
+    decimation = int(sample_rate / target_rate)
+    if decimation < 1:
+        decimation = 1
+    audio_48k = sig.decimate(audio_deemph, decimation, ftype='fir', zero_phase=True)
+    actual_rate = sample_rate / decimation
+
+    # ── STAGE 5: Normalize ──
+    peak = np.max(np.abs(audio_48k))
+    if peak > 0:
+        audio_48k = audio_48k / peak * 0.9
+
+    # ── STAGE 6: Save as WAV ──
+    if output_path:
+        import wave
+        import struct
+
+        # Convert to 16-bit PCM
+        audio_pcm = (audio_48k * 32767).astype(np.int16)
+
+        wav_path = output_path
+        if not wav_path.endswith('.wav'):
+            wav_path = wav_path.rsplit('.', 1)[0] + '.wav'
+
+        with wave.open(wav_path, 'w') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(int(actual_rate))
+            wf.writeframes(audio_pcm.tobytes())
+
+        duration_s = len(audio_48k) / actual_rate
+        print("  audio: saved %s (%.1fs, %d Hz)" % (wav_path, duration_s, int(actual_rate)))
+        return wav_path
+
+    return audio_48k
+
+
 def main():
     parser = argparse.ArgumentParser(description='FPV Video Decoder')
     parser.add_argument('input', nargs='?', help='IQ file or "capture" for live capture')
@@ -371,6 +470,7 @@ def main():
     parser.add_argument('--list-channels', action='store_true')
     parser.add_argument('--force', action='store_true', help='Skip video validation')
     parser.add_argument('--width', type=int, default=720, help='Output width in pixels')
+    parser.add_argument('--audio', action='store_true', help='Also decode audio subcarrier')
     args = parser.parse_args()
 
     if args.list_channels:
@@ -440,6 +540,19 @@ def main():
     green_path = args.output.replace('.png', '_green.png')
     Image.fromarray(rgb, 'RGB').save(green_path)
     print("Saved: %s" % green_path)
+
+    # Audio decode
+    if args.audio:
+        print("Decoding audio...")
+        audio_path = args.output.replace('.png', '.wav')
+        try:
+            result = decode_audio(iq, sample_rate, args.standard, audio_path)
+            if result is None:
+                print("  no audio subcarrier found")
+            elif isinstance(result, str):
+                print("  audio: %s" % result)
+        except Exception as e:
+            print("  audio decode failed: %s" % e)
 
 
 if __name__ == '__main__':
