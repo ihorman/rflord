@@ -200,14 +200,20 @@
       }
 
       // Frequency labels at bottom
-      ctx.fillStyle = 'rgba(136,136,136,0.7)';
-      ctx.font = '9px monospace';
+      ctx.fillStyle = 'rgba(200,220,255,0.9)';
+      ctx.font = 'bold 11px monospace';
       ctx.textAlign = 'center';
-      var freqLabels = [100, 500, 1000, 2000, 3000, 4000, 5000];
+      var freqLabels = [100, 500, 1000, 1500, 2000, 2500, 3000, 4000, 5000, 5800];
       for (var f = 0; f < freqLabels.length; f++) {
         var fx = (freqLabels[f] * 1e6 - 50e6) / (6000e6 - 50e6) * W;
-        if (fx > 10 && fx < W - 10) {
-          ctx.fillText(freqLabels[f] + 'M', fx, H - 2);
+        if (fx > 15 && fx < W - 15) {
+          // Background pill for readability
+          var lbl = freqLabels[f] >= 1000 ? (freqLabels[f]/1000).toFixed(1) + 'G' : freqLabels[f] + 'M';
+          var tw = ctx.measureText(lbl).width;
+          ctx.fillStyle = 'rgba(0,0,0,0.6)';
+          ctx.fillRect(fx - tw/2 - 2, H - 14, tw + 4, 13);
+          ctx.fillStyle = 'rgba(200,220,255,0.9)';
+          ctx.fillText(lbl, fx, H - 3);
         }
       }
     }
