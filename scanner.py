@@ -310,15 +310,8 @@ def classify_signal(freq_mhz, power, std, device):
     # Suspicious checks
     thresh = -25 if device == "hackrf" else -10
 
-    # Continuous carrier in video bands
-    if 900 <= freq_mhz <= 928 and std < 2 and power > (thresh - 10):
-        return "suspicious", "Possible analog camera (900 MHz)"
-    if 1080 <= freq_mhz <= 1300 and std < 2 and power > (thresh - 10):
-        return "suspicious", "Possible spy camera / FPV (1.2 GHz)"
-    if 2410 <= freq_mhz <= 2483 and std < 2 and power > (thresh - 10):
-        return "suspicious", "Possible analog video TX (2.4 GHz)"
-    if 5725 <= freq_mhz <= 5875 and std < 2 and power > (thresh - 10):
-        return "suspicious", "Possible FPV video TX (5.8 GHz)"
+    # Continuous carrier in video bands — removed: frequency-only guessing
+    # Only flag as suspicious if actual video content is detected (via fpv_decode.py)
 
     # Strong unknown signal
     if power > thresh and band == "Unknown":

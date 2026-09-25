@@ -59,10 +59,6 @@ DRONE_SIGNATURES = [
     (900, 928, 500, "FHSS", "ExpressLRS 900", "ELRS control link — 900 MHz, ultra long range"),
 
     # === Analog FPV Video (unencrypted NTSC/PAL) ===
-    (900, 928, 6000, "FM", "Analog FPV 900", "Analog FPV video — 900 MHz, NTSC/PAL, unencrypted"),
-    (1080, 1300, 6000, "FM", "Analog FPV 1.2G", "Analog FPV video — 1.2 GHz, NTSC/PAL, unencrypted"),
-    (2400, 2483, 6000, "FM", "Analog FPV 2.4G", "Analog FPV video — 2.4 GHz, NTSC/PAL, unencrypted"),
-    (5725, 5875, 6000, "FM", "Analog FPV 5.8G", "Analog FPV video — 5.8 GHz, NTSC/PAL, unencrypted"),
 
     # === Other Drone Brands ===
     # Autel Robotics (EVO series)

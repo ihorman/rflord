@@ -1673,12 +1673,6 @@ def is_critical_signal(freq_mhz, power_dbfs, std, sig_type=""):
     fpv_keywords = ["fpv", "analog fpv", "expresslrs", "elrs", "tbs crossfire", "tracer"]
     if any(kw in sig_lower for kw in fpv_keywords):
         return True, "FPV DRONE"
-    if 1080 <= freq_mhz <= 1300 and std < 3 and power_dbfs > -40:
-        return True, "FPV 1.2GHz"
-    if 5725 <= freq_mhz <= 5875 and std < 3 and power_dbfs > -40:
-        return True, "FPV 5.8GHz"
-    if 900 <= freq_mhz <= 928 and std < 3 and power_dbfs > -40:
-        return True, "FPV 900MHz"
     
     # Hidden camera — HIGH
     cam_keywords = ["camera", "spy cam", "hidden cam", "covert video"]
