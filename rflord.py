@@ -469,11 +469,6 @@ def classify(f, power, std):
     if dist_m < 200:
         return "sus"
     
-    # Far range — surveillance bands suspicious
-    if 900 <= f <= 928 and std < 3: return "sus"
-    if 1080 <= f <= 1300 and std < 3: return "sus"
-    if 5725 <= f <= 5875 and std < 3: return "sus"
-    
     if power > -20: return "sus"
     return "ok"
 
@@ -1542,9 +1537,22 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
                 return name[:20]
     except: pass
     
-    # === STEP 5: Unknown ===
-    if std < 2: return "CW/Carrier"
-    return "Unknown"
+    # === STEP 5: Unknown — use heuristic analysis ===
+    if std < 1.5:
+        return "CW/Carrier"
+    elif std < 2.5:
+        # Narrowband modulated — likely voice or control
+        if power > -40:
+            return "Narrowband/Near"
+        return "Narrowband"
+    elif std < 4:
+        # Medium bandwidth — could be wideband voice or data
+        if power > -40:
+            return "Wideband/Near"
+        return "Wideband"
+    else:
+        # Wideband/modulated — likely digital or noise
+        return "Wideband/Digital"
 
 def ensure_decoded_dir():
     os.makedirs(os.path.join(DECODED_DIR, "screenshots"), exist_ok=True)
