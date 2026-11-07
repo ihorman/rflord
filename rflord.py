@@ -513,52 +513,52 @@ def est_distance(freq_mhz, power_dbfs):
     SDR_GAIN = 30
     rx_dbm = power_dbfs - SDR_GAIN
 
-    # Estimated transmit power (dBm) — realistic for typical sources
-    if 88 <= freq_mhz <= 108:    tx = 60    # FM broadcast tower (1 kW)
-    elif 174 <= freq_mhz <= 230: tx = 50    # DVB-T / DAB tower (100W)
-    elif 470 <= freq_mhz <= 790: tx = 57    # DVB-T2 tower (500W) — Ukraine
-    elif 470 <= freq_mhz <= 860: tx = 57    # ISDB-T / analog TV tower (500W)
-    elif 800 <= freq_mhz <= 890: tx = 43    # GSM800/LTE base station (20W)
-    elif 935 <= freq_mhz <= 960: tx = 43    # GSM900 base station downlink (20W)
-    elif 1805 <= freq_mhz <= 1880: tx = 43  # GSM1800 base station (20W)
-    elif 1920 <= freq_mhz <= 1980: tx = 43  # 3G UMTS uplink
-    elif 2110 <= freq_mhz <= 2170: tx = 43  # 3G/LTE base station (20W)
-    elif 2620 <= freq_mhz <= 2690: tx = 43  # LTE2600 base station (20W)
-    elif 791 <= freq_mhz <= 862: tx = 43    # LTE800 base station (20W)
-    elif 108 <= freq_mhz <= 137: tx = 37    # Air band (aircraft 5W)
-    elif 144 <= freq_mhz <= 148: tx = 37    # 2m ham (5W)
-    elif 430 <= freq_mhz <= 470: tx = 30    # PMR / UHF handheld (1W)
-    elif 2400 <= freq_mhz <= 2500: tx = 20  # WiFi / Bluetooth (100mW)
-    elif 5150 <= freq_mhz <= 5900: tx = 23  # WiFi 5 GHz (200mW)
-    # Military bands — high power transmitters
-    elif 30 <= freq_mhz <= 88:   tx = 40    # Military VHF (10W handheld, 50W vehicle)
-    elif 225 <= freq_mhz <= 400: tx = 43    # Military UHF airband (20W aircraft)
-    elif 1300 <= freq_mhz <= 1400: tx = 50  # L-band radar (100W — Cobra Dane, mil radar)
-    elif 2700 <= freq_mhz <= 3500: tx = 40  # S-band radar (10W)
-    elif 5250 <= freq_mhz <= 5850: tx = 40  # C-band radar (10W)
-    # Digital voice / trunked radio
-    elif 380 <= freq_mhz <= 400: tx = 37    # TETRAPOL / DMR public safety (5W)
-    elif 406 <= freq_mhz <= 430: tx = 37    # TETRAPOL / DMR public safety (5W)
-    elif 440 <= freq_mhz <= 470: tx = 37    # UHF public safety (5W)
-    elif 162 <= freq_mhz <= 174: tx = 37    # VHF public safety / marine (5W)
-    # Aviation / maritime
-    elif 156 <= freq_mhz <= 162: tx = 25    # Marine VHF (25W but typical 5W = 37)
-    elif 1087 <= freq_mhz <= 1095: tx = 27  # ADS-B transponder (500mW)
-    elif 1574 <= freq_mhz <= 1577: tx = 10  # GPS L1 (very weak at ground level)
-    elif 1227 <= freq_mhz <= 1228: tx = 10  # GPS L2
-    # IoT / utility meters / vehicle monitoring
-    elif 169 <= freq_mhz <= 170: tx = 27    # SRD/LoRa (500mW)
-    elif 868 <= freq_mhz <= 870: tx = 27    # EU LoRa/ISM (500mW)
-    elif 500 <= freq_mhz <= 530: tx = 30    # AVM / vehicle monitoring (1W)
-    elif 900 <= freq_mhz <= 930: tx = 30    # ISM / utility meters (1W)
-    elif 1880 <= freq_mhz <= 1900: tx = 23  # DECT (250mW)
-    # Surveillance / spy devices — low power
-    elif 5725 <= freq_mhz <= 5875: tx = 14  # FPV / spy camera (25mW)
-    elif 1080 <= freq_mhz <= 1300: tx = 14  # Spy camera 1.2 GHz (25mW)
-    elif 420 <= freq_mhz <= 430:  tx = 20   # ISM/surveillance (100mW)
-    elif 315 <= freq_mhz <= 320:  tx = 10   # Key fobs / garage remotes (10mW)
-    elif 433 <= freq_mhz <= 435:  tx = 10   # ISM short-range (10mW)
-    else: tx = 27                            # Default: ~500 mW
+    # Estimated transmit power (dBm) — NARROW bands FIRST (order matters!)
+    # --- Narrow specific bands ---
+    if 169 <= freq_mhz <= 170: tx = 27    # SRD/LoRa (500mW) BEFORE 162-174
+    elif 315 <= freq_mhz <= 320: tx = 10   # Key fobs / garage remotes (10mW)
+    elif 380 <= freq_mhz <= 400: tx = 37   # TETRAPOL / DMR public safety (5W) BEFORE 225-400
+    elif 406 <= freq_mhz <= 430: tx = 37   # TETRAPOL / DMR public safety (5W)
+    elif 420 <= freq_mhz <= 430: tx = 20   # ISM/surveillance (100mW) — unreachable, in 406-430
+    elif 433 <= freq_mhz <= 435: tx = 10   # ISM short-range (10mW) BEFORE 430-470
+    elif 440 <= freq_mhz <= 470: tx = 37   # UHF public safety (5W) BEFORE 430-470
+    elif 446 <= freq_mhz <= 447: tx = 27   # PMR446 (500mW) BEFORE 430-470
+    elif 462 <= freq_mhz <= 468: tx = 27   # FRS/GMRS (500mW) BEFORE 430-470
+    elif 500 <= freq_mhz <= 530: tx = 30   # AVM / vehicle monitoring (1W) BEFORE 470-860
+    elif 5725 <= freq_mhz <= 5875: tx = 14 # FPV / spy camera (25mW) BEFORE 5250-5850
+    elif 868 <= freq_mhz <= 870: tx = 27   # EU LoRa/ISM (500mW)
+    elif 900 <= freq_mhz <= 930: tx = 30   # ISM / utility meters (1W)
+    elif 1080 <= freq_mhz <= 1095: tx = 27 # ADS-B transponder (500mW) BEFORE 1080-1300
+    elif 1087 <= freq_mhz <= 1095: tx = 27 # ADS-B (unreachable, merged above)
+    elif 1227 <= freq_mhz <= 1228: tx = 10 # GPS L2
+    elif 1080 <= freq_mhz <= 1300: tx = 14 # Spy camera 1.2 GHz (25mW)
+    elif 1300 <= freq_mhz <= 1400: tx = 50 # L-band radar (100W)
+    elif 1574 <= freq_mhz <= 1577: tx = 10 # GPS L1
+    elif 1880 <= freq_mhz <= 1900: tx = 23 # DECT (250mW)
+    # --- Wide bands ---
+    elif 30 <= freq_mhz <= 88:   tx = 40   # Military VHF (10W handheld, 50W vehicle)
+    elif 88 <= freq_mhz <= 108:  tx = 60   # FM broadcast tower (1 kW)
+    elif 108 <= freq_mhz <= 137: tx = 37   # Air band (aircraft 5W)
+    elif 144 <= freq_mhz <= 148: tx = 37   # 2m ham (5W)
+    elif 156 <= freq_mhz <= 162: tx = 25   # Marine VHF (25W but typical 5W)
+    elif 162 <= freq_mhz <= 174: tx = 37   # VHF public safety / marine (5W)
+    elif 174 <= freq_mhz <= 230: tx = 50   # DVB-T / DAB tower (100W)
+    elif 225 <= freq_mhz <= 400: tx = 43   # Military UHF airband (20W aircraft)
+    elif 430 <= freq_mhz <= 470: tx = 30   # PMR / UHF handheld (1W)
+    elif 470 <= freq_mhz <= 790: tx = 57   # DVB-T2 tower (500W) — Ukraine
+    elif 470 <= freq_mhz <= 860: tx = 57   # ISDB-T / analog TV tower (500W)
+    elif 791 <= freq_mhz <= 862: tx = 43   # LTE800 base station (20W)
+    elif 800 <= freq_mhz <= 890: tx = 43   # GSM800/LTE base station (20W)
+    elif 935 <= freq_mhz <= 960: tx = 43   # GSM900 base station downlink (20W)
+    elif 1805 <= freq_mhz <= 1880: tx = 43 # GSM1800 base station (20W)
+    elif 1920 <= freq_mhz <= 1980: tx = 43 # 3G UMTS uplink
+    elif 2110 <= freq_mhz <= 2170: tx = 43 # 3G/LTE base station (20W)
+    elif 2400 <= freq_mhz <= 2500: tx = 20 # WiFi / Bluetooth (100mW)
+    elif 2620 <= freq_mhz <= 2690: tx = 43 # LTE2600 base station (20W)
+    elif 2700 <= freq_mhz <= 3500: tx = 40 # S-band radar (10W)
+    elif 5150 <= freq_mhz <= 5900: tx = 23 # WiFi 5 GHz (200mW)
+    elif 5250 <= freq_mhz <= 5850: tx = 40 # C-band radar (10W)
+    else: tx = 27                           # Default: ~500 mW
 
     # Free-space path loss from link budget
     fspl = tx - rx_dbm  # dB
@@ -1348,6 +1348,8 @@ def _read_key(stdscr):
             return 'log'
         elif key == ord('h') or key == ord('H'):
             return 'history'
+        elif key == ord('p') or key == ord('P'):
+            return 'perimeter'
         elif key == 27:  # ESC — deactivate cursor
             _cursor_active = False
             return 'cursor_off'
@@ -1463,7 +1465,18 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if spy_name:
         return f"{spy_icon} {spy_name}"
     
-    # === STEP 2: Known frequency bands FIRST (before rf_protocols device guesses) ===
+    # === STEP 2: Drone RF DB FIRST for bursty signals (FHSS drones vs WiFi) ===
+    # DJI OcuSync/ExpressLRS are bursty (high std), WiFi is continuous (low std)
+    if std and std > 4:
+        try:
+            from drone_rf_db import match_drone
+            drone_matches = match_drone(freq_mhz, bw)
+            if drone_matches:
+                name = drone_matches[0][1]  # Best match name
+                return name[:20]
+        except: pass
+    
+    # === STEP 2b: Known frequency bands (continuous signals) ===
     
     # Cellular
     if 935 <= freq_mhz <= 960: return "GSM900"
@@ -2042,7 +2055,7 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     stdscr.refresh()
 
 def main_curses(stdscr, devices):
-    global INTERVAL, VOICE_THRESHOLD, _cursor_pos, _suppress_active, ALARM_ENABLED, WARNING_ENABLED
+    global INTERVAL, VOICE_THRESHOLD, _cursor_pos, _cursor_panel, _suppress_active, ALARM_ENABLED, WARNING_ENABLED
     if isinstance(devices, str):
         devices = [devices]  # Backward compat
     device = devices[0]  # Primary device
@@ -2443,6 +2456,15 @@ def main_curses(stdscr, devices):
                     'sus_count': len(sus_grouped), 'ok_count': len(ok_grouped),
                     'uptime': str(int(time.time() - start_time)),
                 })
+                # Feed FFT spectrum data for waterfall display
+                try:
+                    spec_points = [[s['freq']/1e6, s['peak']] for s in unique if s.get('freq')]
+                    if spec_points:
+                        spec_points.sort(key=lambda x: x[0])
+                        f_lo = spec_points[0][0]
+                        f_hi = spec_points[-1][0]
+                        web_dash.update_spectrum(f_lo, f_hi, spec_points)
+                except: pass
             except Exception as e:
                 log.warning(f"Web dashboard update failed: {e}")
 
@@ -2678,7 +2700,7 @@ def main_curses(stdscr, devices):
                     threat_level=threat_level,
                     peak_dbfs=s['peak'],
                     distance=est_distance(f, s['peak']),
-                    details=f"Suspicious signal (std={s['std']:.1f}, {cls})",
+                    details=f"Suspicious signal (std={s['std']:.1f}, {sig_type})",
                 )
                 log.info(f"SPY EVENT: {spy_name} at {f:.1f} MHz (threat={threat})")
         

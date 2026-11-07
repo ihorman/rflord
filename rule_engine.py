@@ -179,9 +179,11 @@ class RuleEngine:
         # Spy_db, drone_rf, artemis, rf_protocols
         sigs = self.db.identify_freq(event.freq_mhz, tolerance_mhz=0.5)
         for sig in sigs:
-            threat = int(sig.get('threat_level', 3) or 3)
+            threat = sig.get('threat_level')
             if threat is None:
                 threat = 3
+            else:
+                threat = int(threat)
             matches.append(SignatureMatch(
                 signature_type='rf_freq',
                 signature_id=f"freq:{event.freq_mhz:.1f}",

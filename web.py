@@ -155,6 +155,7 @@ function fmtFreq(f) { return (f / 1e6).toFixed(3); }
 function fmtPower(p) { return (p != null) ? p.toFixed(1) + ' dB' : '—'; }
 function fmtStd(s) { return (s != null) ? s.toFixed(2) : '—'; }
 function fmtDist(d) { return (d != null) ? d : '—'; }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 function renderRows(tbody, signals) {
   if (!signals || signals.length === 0) {
@@ -167,8 +168,8 @@ function renderRows(tbody, signals) {
     <td class="power">${fmtPower(s.power)}</td>
     <td class="std">${fmtStd(s.std)}</td>
     <td class="distance">${fmtDist(s.distance)}</td>
-    <td class="type">${s.type || '—'}</td>
-    <td class="id" title="${(s.identification||'').replace(/"/g,'&quot;')}">${s.identification || '—'}</td>
+    <td class="type">${escHtml(s.type || '—')}</td>
+    <td class="id" title="${escHtml(s.identification||'')}">${escHtml(s.identification || '—')}</td>
   </tr>`).join('');
 }
 
@@ -350,6 +351,7 @@ class WebDashboard:
         self.port = port
         self._signals: list[dict] = []
         self._metadata: dict = {}
+        self._spectrum: dict = {}  # FFT spectrum data: {freq_lo, freq_hi, points: [[freq_mhz, power_db], ...]}
         self._lock = threading.Lock()
         self._version = 0
         self._last_update_time: float = 0
@@ -378,9 +380,14 @@ class WebDashboard:
         from functools import wraps
         from flask import request as flask_request
 
-        # Basic auth credentials (temporary — change in production)
-        WEB_USER = os.environ.get('RFLORD_WEB_USER', 'xxx')
-        WEB_PASS = os.environ.get('RFLORD_WEB_PASS', 'xxx')
+        # Basic auth credentials — fail closed if not configured
+        WEB_USER = os.environ.get('RFLORD_WEB_USER', '')
+        WEB_PASS = os.environ.get('RFLORD_WEB_PASS', '')
+        if not WEB_USER or not WEB_PASS:
+            import secrets
+            WEB_USER = WEB_USER or 'rflord'
+            WEB_PASS = WEB_PASS or secrets.token_urlsafe(16)
+            log.warning("RFLORD_WEB_USER/PASS not set — generated random password: %s", WEB_PASS)
 
         def check_auth(username, password):
             return username == WEB_USER and password == WEB_PASS
@@ -413,6 +420,12 @@ class WebDashboard:
         def api_signals():
             with self._lock:
                 return {"signals": list(self._signals), "metadata": dict(self._metadata)}
+
+        @app.route("/api/spectrum")
+        @requires_auth
+        def api_spectrum():
+            with self._lock:
+                return dict(self._spectrum) if self._spectrum else {"points": [], "freq_lo": 0, "freq_hi": 0}
 
         @app.route("/api/spy")
         @requires_auth
@@ -481,6 +494,17 @@ class WebDashboard:
                 self._last_update_time = time.time()
                 self._save_cache()
             # If signals is empty, keep last good data — don't clear tables
+
+    def update_spectrum(self, freq_lo_mhz: float, freq_hi_mhz: float, points: list) -> None:
+        """Store FFT spectrum data for the web waterfall display.
+        points: list of [freq_mhz, power_db] pairs (sorted by frequency)."""
+        with self._lock:
+            self._spectrum = {
+                'freq_lo': freq_lo_mhz,
+                'freq_hi': freq_hi_mhz,
+                'points': points,
+                'timestamp': time.time()
+            }
 
     def _load_cache(self):
         """Load last good signals from disk cache on startup."""

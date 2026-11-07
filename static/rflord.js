@@ -165,20 +165,65 @@
       redraw();
     }
 
+    /* Fetch real FFT spectrum data from the API and push a row */
+    function fetchSpectrum() {
+      if (!ctx) return;
+      fetch('/api/spectrum')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data || !data.points || data.points.length === 0) return;
+          var bins = new Float32Array(COLS);
+          for (var i = 0; i < COLS; i++) bins[i] = -80;
+
+          var fLo = data.freq_lo || 0;
+          var fHi = data.freq_hi || 0;
+          if (fHi <= fLo) return;
+          var range = fHi - fLo;
+
+          // Map FFT points into bins
+          for (var p = 0; p < data.points.length; p++) {
+            var freq = data.points[p][0];  // MHz
+            var power = data.points[p][1]; // dB
+            var bin = Math.floor((freq - fLo) / range * COLS);
+            if (bin >= 0 && bin < COLS) {
+              bins[bin] = Math.max(bins[bin], power);
+            }
+          }
+
+          history.push(bins);
+          if (history.length > MAX_ROWS) history.shift();
+          redraw();
+        })
+        .catch(function() {});
+    }
+
     function redraw() {
       if (!ctx || history.length === 0) {
         clearCanvas();
         return;
       }
 
-      // Dark background
-      ctx.fillStyle = '#0a0a1a';
+      // Dark background with subtle gradient
+      var grad = ctx.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, '#060614');
+      grad.addColorStop(1, '#0a0a2a');
+      ctx.fillStyle = grad;
       ctx.fillRect(0, 0, W, H);
 
-      // Draw grid
-      ctx.strokeStyle = 'rgba(15,52,96,0.3)';
+      // Draw grid lines with frequency labels
+      ctx.strokeStyle = 'rgba(30,80,160,0.25)';
       ctx.lineWidth = 0.5;
-      for (var g = 1; g < 5; g++) {
+      ctx.font = '9px monospace';
+      ctx.fillStyle = 'rgba(100,180,255,0.5)';
+      for (var g = 1; g < 8; g++) {
+        var gx = Math.floor(W * g / 8) + 0.5;
+        ctx.beginPath();
+        ctx.moveTo(gx, 0);
+        ctx.lineTo(gx, H);
+        ctx.stroke();
+      }
+      // Horizontal grid
+      for (var g = 1; g < 4; g++) {
         var gy = Math.floor(H * g / 4) + 0.5;
         ctx.beginPath();
         ctx.moveTo(0, gy);
@@ -218,7 +263,7 @@
       }
     }
 
-    return { init: init, pushRow: pushRow };
+    return { init: init, pushRow: pushRow, fetchSpectrum: fetchSpectrum };
   })();
 
 
@@ -614,6 +659,9 @@
     waterfall.init();
     toasts.init();
     audioPlayer.init();
+
+    /* Fetch FFT spectrum every 2 seconds */
+    setInterval(function() { waterfall.fetchSpectrum(); }, 2000);
 
     /* Load initial data then connect SSE */
     loadInitial();

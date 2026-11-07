@@ -184,7 +184,7 @@ def decode_multimon(wav_file, mode='auto'):
         return "[multimon-ng not installed]"
 
 
-def decode_signal(freq_mhz, mode='auto', duration_s=3, raw_file=None, sample_rate=48000):
+def decode_signal(freq_mhz, mode='auto', duration_s=3, raw_file=None, sample_rate=2000000):
     """Full decode pipeline: capture → demod → decode.
 
     Returns dict with decode results.
