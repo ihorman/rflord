@@ -244,7 +244,9 @@ setInterval(loadSpyEvents, 60000);
 </html>"""
 
 
-AUDIO_DIR = os.path.expanduser("~/.local/share/rflord/audio_samples")
+# SAME directory where rflord.save_decoded_audio() writes (DECODED_DIR/audio).
+# These paths disagreed -> "Decoded Voice Samples" always showed 0.
+AUDIO_DIR = os.path.expanduser("~/.rflord/audio")
 
 
 def _list_audio_files():
@@ -260,11 +262,16 @@ def _list_audio_files():
         if ext not in ('.wav', '.mp3', '.ogg', '.flac', '.m4a', '.opus'):
             continue
         size = os.path.getsize(path)
-        # Estimate duration from file size for WAV (~16kHz 16-bit mono)
+        # Real duration from WAV header (samples are 48 kHz — the old fixed
+        # 16 kHz estimate showed 3x too long durations)
         duration = ''
         if ext == '.wav' and size > 44:
-            samples = (size - 44) / 2  # 16-bit = 2 bytes/sample
-            secs = int(samples / 16000)
+            try:
+                import wave as _wave
+                with _wave.open(path) as _wf:
+                    secs = int(_wf.getnframes() / max(_wf.getframerate(), 1))
+            except Exception:
+                secs = 0
             if secs > 0:
                 duration = '%d:%02d' % (secs // 60, secs % 60)
         files.append({

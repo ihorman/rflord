@@ -828,6 +828,8 @@ def _start_speak_worker():
     def _speak_thread():
         global _speaking, _speak_queue
         while _speak_queue:
+            # HAL voice = LOWER priority than captured radio audio
+            _wait_captures_done()
             text = _speak_queue.popleft()
             log.info(f"SPEAK: {text[:100]}")
             try:
@@ -845,11 +847,12 @@ def _start_speak_worker():
                         log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
                         continue
                     if os.path.exists(out):
-                        # Cross-platform audio playback
-                        if IS_MACOS:
-                            r3 = subprocess.run(["afplay", out], capture_output=True, timeout=120)
-                        else:
-                            r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                        # Serialized playback — never over a captured radio sample
+                        with _playback_lock:
+                            if IS_MACOS:
+                                r3 = subprocess.run(["afplay", out], capture_output=True, timeout=120)
+                            else:
+                                r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
                         os.unlink(out)
                         if r3.returncode != 0:
                             log.warning(f"TTS playback failed: rc={r3.returncode}")
@@ -1663,7 +1666,65 @@ def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
     except:
         return None
 
-_hackrf_lock = threading.Lock()  # ONE HackRF user at a time (sweep workers + capture)
+
+def _audio_looks_like_voice(wav_path):
+    """Quality gate: real speech DYNAMICS vs constant hiss / beacon silence.
+
+    Field failure: every signal in 108-174 was played — ILS/VOR/NDB beacons
+    (unmodulated carriers -> demodulated silence) and noise -> constant hiss.
+    Speech has strong frame-energy variation; hiss and silence do not.
+    """
+    try:
+        import wave
+        import numpy as np
+        with wave.open(wav_path) as w:
+            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32767.0
+        if len(audio) < 2400:  # < 50 ms
+            return False
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        if rms < 0.005:
+            log.info("VOICE GATE: silence (beacon carrier?) — skip play")
+            return False
+        # Frame energies at 25 ms hops
+        fl = 1200
+        n_frames = len(audio) // fl
+        if n_frames < 4:
+            return False
+        energies = np.array([np.sqrt(np.mean(audio[i*fl:(i+1)*fl] ** 2)) for i in range(n_frames)])
+        dyn = float(np.max(energies) / (np.mean(energies) + 1e-9))
+        # Speech: max/mean typically > 2.5 (syllables + pauses).
+        # Stationary hiss: ~1.2-1.8. Constant carrier: ~1.0.
+        if dyn < 2.0:
+            log.info(f"VOICE GATE: no speech dynamics (dyn={dyn:.1f}) — noise/constant, skip play")
+            return False
+        return True
+    except Exception as e:
+        log.warning(f"VOICE GATE error: {e}")
+        return False  # fail closed: never play garbage
+
+_hackrf_lock = threading.Lock()   # ONE HackRF user at a time (sweep workers + capture)
+_playback_lock = threading.Lock() # ONE audio stream at a time (no HAL-over-capture overlap)
+_capture_waiting = 0              # captures queued/playing -> HAL voice waits
+_capture_counter_lock = threading.Lock()
+
+def _capture_enter():
+    global _capture_waiting
+    with _capture_counter_lock:
+        _capture_waiting += 1
+
+def _capture_exit():
+    global _capture_waiting
+    with _capture_counter_lock:
+        _capture_waiting -= 1
+
+def _wait_captures_done(timeout=60):
+    """HAL voice has LOWER priority: wait for captured-radio playback first."""
+    end = time.time() + timeout
+    while time.time() < end:
+        with _capture_counter_lock:
+            if _capture_waiting <= 0:
+                return
+        time.sleep(0.2)
 
 def _kill_stale_hackrf():
     """Kill orphaned hackrf child processes still holding the USB device
@@ -1682,6 +1743,7 @@ def play_voice_sample(freq_mhz):
         raw = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
         wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
         log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ...")
+        _capture_enter()
         r = None
         with _hackrf_lock:
             for attempt in range(3):
@@ -1711,14 +1773,23 @@ def play_voice_sample(freq_mhz):
             log.warning(f"VOICE DECODE FAIL: {freq_mhz:.1f} MHz demod produced no audio")
             return
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
+        # Quality gate: only REAL voice is played and saved (noise/beacons skipped)
+        if not _audio_looks_like_voice(wav):
+            log.info(f"DECODED: {freq_mhz:.1f} MHz — no voice content, not saved")
+            try:
+                os.unlink(wav)
+            except OSError:
+                pass
+            return
         log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}, playing audio...")
         save_decoded_audio(freq_mhz, wav, sig_type)
-        # Cross-platform audio playback
-        if IS_MACOS:
-            r2 = subprocess.run(["afplay", wav], capture_output=True, timeout=10)
-        else:
-            ensure_sink()
-            r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
+        # Cross-platform audio playback (serialized with HAL voice)
+        with _playback_lock:
+            if IS_MACOS:
+                r2 = subprocess.run(["afplay", wav], capture_output=True, timeout=10)
+            else:
+                ensure_sink()
+                r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
         if r2.returncode != 0:
             log.warning(f"VOICE PLAY FAIL: rc={r2.returncode}")
         else:
@@ -1726,6 +1797,8 @@ def play_voice_sample(freq_mhz):
         os.unlink(wav)
     except Exception as e:
         log.warning(f"VOICE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
+    finally:
+        _capture_exit()
 
 def is_voice_signal(freq_mhz, std, sig_type=""):
     """Check if signal is likely a voice radio (PMR, ham, air band, etc.)."""
@@ -1738,7 +1811,7 @@ def is_voice_signal(freq_mhz, std, sig_type=""):
     if 430 <= freq_mhz <= 470: return True  # 70cm/PMR
     if 446 <= freq_mhz <= 447: return True  # PMR446
     if 462 <= freq_mhz <= 468: return True  # FRS/GMRS
-    if 108 <= freq_mhz <= 137: return True  # Air band
+    if 118 <= freq_mhz <= 137.5: return True  # Air band VOICE (108-118 = ILS/VOR nav beacons, NOT voice)
     if 137 <= freq_mhz <= 150: return True  # VHF low (130 MHz radios, marine/ham)
     if 150 <= freq_mhz <= 174: return True  # VHF commercial
     if 450 <= freq_mhz <= 470: return True  # UHF commercial
@@ -2881,7 +2954,15 @@ def main_curses(stdscr, devices):
         all_voice_signals = [s for s in unique
                              if is_voice_signal(s['freq']/1e6, s['std'],
                                                 get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']))
-                             and s['peak'] > VOICE_THRESHOLD]
+                             and s['peak'] > VOICE_THRESHOLD
+                             and s['std'] >= 0.5   # unmodulated carrier (beacon) = std~0
+                             and get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']) not in ("CW/Carrier", "Narrowband")]
+        # Top-2 strongest only — capturing EVERY candidate queued minutes of
+        # noise and the real radio transmission ended before its turn.
+        all_voice_signals.sort(key=lambda x: x['peak'], reverse=True)
+        if len(all_voice_signals) > 2:
+            log.info(f"VOICE QUEUE: {len(all_voice_signals)} candidates, capturing top 2 strongest")
+            all_voice_signals = all_voice_signals[:2]
         # Filter by cooldown
         voice_signals = []
         for s in all_voice_signals:
