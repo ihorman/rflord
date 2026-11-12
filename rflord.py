@@ -254,7 +254,8 @@ def detect_device():
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
     cmd = f"{HACKRF_SWEEP_BIN} -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n}"
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
+        with _hackrf_lock:  # never run while a voice/camera capture holds the device
+            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
         if r.returncode != 0:
             err = r.stderr.strip()
             if err:
@@ -1671,6 +1672,29 @@ def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
         return None
 
 
+def _voice_dynamics(wav_path):
+    """Speech-dynamics score (max/mean frame energy). Speech > 2.0,
+    hiss ~1.2-1.8, beacon silence ~1.0. Returns 0.0 on error."""
+    try:
+        import wave
+        import numpy as np
+        with wave.open(wav_path) as w:
+            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32767.0
+        if len(audio) < 2400:
+            return 0.0
+        rms = float(np.sqrt(np.mean(audio ** 2)))
+        if rms < 0.005:
+            return 0.0
+        fl = 1200
+        n_frames = len(audio) // fl
+        if n_frames < 4:
+            return 0.0
+        energies = np.array([np.sqrt(np.mean(audio[i*fl:(i+1)*fl] ** 2)) for i in range(n_frames)])
+        return float(np.max(energies) / (np.mean(energies) + 1e-9))
+    except Exception:
+        return 0.0
+
+
 def _audio_looks_like_voice(wav_path):
     """Quality gate: real speech DYNAMICS vs constant hiss / beacon silence.
 
@@ -1678,33 +1702,16 @@ def _audio_looks_like_voice(wav_path):
     (unmodulated carriers -> demodulated silence) and noise -> constant hiss.
     Speech has strong frame-energy variation; hiss and silence do not.
     """
-    try:
-        import wave
-        import numpy as np
-        with wave.open(wav_path) as w:
-            audio = np.frombuffer(w.readframes(w.getnframes()), dtype=np.int16).astype(np.float32) / 32767.0
-        if len(audio) < 2400:  # < 50 ms
-            return False
-        rms = float(np.sqrt(np.mean(audio ** 2)))
-        if rms < 0.005:
-            log.info("VOICE GATE: silence (beacon carrier?) — skip play")
-            return False
-        # Frame energies at 25 ms hops
-        fl = 1200
-        n_frames = len(audio) // fl
-        if n_frames < 4:
-            return False
-        energies = np.array([np.sqrt(np.mean(audio[i*fl:(i+1)*fl] ** 2)) for i in range(n_frames)])
-        dyn = float(np.max(energies) / (np.mean(energies) + 1e-9))
-        # Speech: max/mean typically > 2.5 (syllables + pauses).
-        # Stationary hiss: ~1.2-1.8. Constant carrier: ~1.0.
-        if dyn < 2.0:
-            log.info(f"VOICE GATE: no speech dynamics (dyn={dyn:.1f}) — noise/constant, skip play")
-            return False
-        return True
-    except Exception as e:
-        log.warning(f"VOICE GATE error: {e}")
-        return False  # fail closed: never play garbage
+    dyn = _voice_dynamics(wav_path)
+    if dyn <= 0.0:
+        log.info("VOICE GATE: silence/too short (beacon carrier?) — skip play")
+        return False
+    # Speech: max/mean typically > 2.5 (syllables + pauses).
+    # Stationary hiss: ~1.2-1.8. Constant carrier: ~1.0.
+    if dyn < 2.0:
+        log.info(f"VOICE GATE: no speech dynamics (dyn={dyn:.1f}) — noise/constant, skip play")
+        return False
+    return True
 
 _hackrf_lock = threading.Lock()   # ONE HackRF user at a time (sweep workers + capture)
 _playback_lock = threading.Lock() # ONE audio stream at a time (no HAL-over-capture overlap)
@@ -1731,74 +1738,153 @@ def _wait_captures_done(timeout=60):
         time.sleep(0.2)
 
 def _kill_stale_hackrf():
-    """Kill orphaned hackrf child processes still holding the USB device
-    (watchdog-abandoned sweep threads leave hackrf_sweep running -> every
-    later hackrf_transfer fails with 'Resource busy')."""
-    for proc in ("hackrf_transfer", "hackrf_sweep"):
-        try:
-            subprocess.run(["pkill", "-x", proc], capture_output=True, timeout=3)
-        except Exception:
-            pass
-    time.sleep(0.3)
+    """Kill orphaned hackrf_transfer processes still holding the USB device
+    (watchdog-abandoned capture threads). NEVER kill hackrf_sweep here —
+    it is usually the ACTIVE SCAN, and killing it made every sweep time out."""
+    try:
+        subprocess.run(["pkill", "-x", "hackrf_transfer"], capture_output=True, timeout=3)
+    except Exception:
+        pass
+    time.sleep(0.2)
+
+def _iq_rms(raw_path):
+    """RMS of int8 interleaved IQ file (signal level)."""
+    try:
+        import numpy as np
+        data = np.fromfile(raw_path, dtype=np.int8)
+        if len(data) < 100:
+            return 0.0
+        iq = (data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)) / 128.0
+        return float(np.sqrt(np.mean(np.abs(iq) ** 2)))
+    except Exception:
+        return 0.0
+
 
 def play_voice_sample(freq_mhz):
+    """Capture and play a radio transmission.
+
+    - Captures in 2s chunks UNTIL THE TRANSMISSION ENDS (level drop > 12 dB)
+      or 30 s max — a long PTT is fully captured before scanning continues.
+    - Analog: auto-selects NFM/AM/WFM by speech dynamics (136 MHz radios
+      can be AM or NFM — hardcoding NFM produced noise).
+    - Digital: if analog has no speech, tries dsdccx (DMR/D-Star/dPMR/
+      YSF/NXDN/P25) and announces decoded text.
+    """
     try:
         freq_hz = int(freq_mhz * 1e6)
-        raw = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
-        wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
-        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ...")
+        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ (until transmission ends)...")
         _capture_enter()
-        r = None
+        chunks = []
+        first_rms = None
         with _hackrf_lock:
-            for attempt in range(3):
-                _kill_stale_hackrf()  # sweep may still hold the device
-                r = subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
-                                "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
-                               capture_output=True, timeout=15)
-                if r.returncode == 0:
+            _kill_stale_hackrf()
+            for i in range(15):  # 15 x 2s = 30s max
+                chunk = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
+                r = None
+                for attempt in range(2):
+                    r = subprocess.run(["hackrf_transfer", "-r", chunk, "-f", str(freq_hz),
+                                    "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
+                                   capture_output=True, timeout=15)
+                    if r.returncode == 0:
+                        break
+                    log.warning(f"VOICE CAPTURE retry {attempt+1}: rc={r.returncode} stderr={r.stderr[:120]}")
+                    _kill_stale_hackrf()
+                    time.sleep(0.5)
+                if not r or r.returncode != 0 or not os.path.exists(chunk) or os.path.getsize(chunk) < 1000:
+                    try:
+                        os.unlink(chunk)
+                    except OSError:
+                        pass
+                    if not chunks:
+                        log.warning(f"VOICE CAPTURE FAIL: {freq_mhz:.1f} MHz")
                     break
-                log.warning(f"VOICE CAPTURE retry {attempt+1}: rc={r.returncode} stderr={r.stderr[:120]}")
-                time.sleep(1.0)
-        if not r or r.returncode != 0:
-            log.warning(f"VOICE CAPTURE FAIL: hackrf_transfer rc={r.returncode if r else 'none'}")
-            return
-        if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
-            log.warning(f"VOICE CAPTURE FAIL: raw file missing or too small ({os.path.getsize(raw) if os.path.exists(raw) else 0} bytes)")
-            return
-        # Use the SAME demodulator as voice_decode.py (channel filter + de-emphasis)
-        from voice_decode import iq_to_audio_wav
+                rms = _iq_rms(chunk)
+                if first_rms is None:
+                    first_rms = max(rms, 1e-6)
+                    chunks.append(chunk)
+                    continue
+                # Transmission over? level dropped >12 dB vs the active level
+                if rms < first_rms * 0.25 or rms < 0.002:
+                    try:
+                        os.unlink(chunk)
+                    except OSError:
+                        pass
+                    log.info(f"VOICE CAPTURE: transmission ended after {len(chunks)*2}s")
+                    break
+                chunks.append(chunk)
+        if not chunks:
+            return  # finally: _capture_exit()
+        # Merge chunks into one IQ file
+        raw = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
+        with open(raw, 'wb') as out:
+            for c in chunks:
+                with open(c, 'rb') as inp:
+                    out.write(inp.read())
+                os.unlink(c)
+        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz got {len(chunks)*2}s of IQ")
+
+        from voice_decode import iq_to_audio_wav, decode_dsd
+        # --- ANALOG: auto-select best demod by speech dynamics ---
         if 88 <= freq_mhz <= 108:
-            mode = 'wfm'
+            modes = ['wfm', 'nfm']
         else:
-            mode = 'nfm'
-        wav = iq_to_audio_wav(raw, sample_rate=2000000, mode=mode, output=wav)
-        os.unlink(raw)
-        if not wav or not os.path.exists(wav) or os.path.getsize(wav) < 1000:
-            log.warning(f"VOICE DECODE FAIL: {freq_mhz:.1f} MHz demod produced no audio")
-            return
+            modes = ['nfm', 'am']   # 136 MHz can be AM OR NFM; 446 = NFM
+        best_wav, best_mode, best_score = None, None, 0.0
+        cand_wavs = []
+        for m in modes:
+            out_wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
+            w = iq_to_audio_wav(raw, sample_rate=2000000, mode=m, output=out_wav)
+            if not w or not os.path.exists(w):
+                continue
+            cand_wavs.append(w)
+            score = _voice_dynamics(w)
+            log.info(f"VOICE MODE {m}: dynamics={score:.2f}")
+            if score > best_score:
+                best_wav, best_mode, best_score = w, m, score
+        for w in cand_wavs:
+            if w != best_wav:
+                try:
+                    os.unlink(w)
+                except OSError:
+                    pass
+
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
-        # Quality gate: only REAL voice is played and saved (noise/beacons skipped)
-        if not _audio_looks_like_voice(wav):
-            log.info(f"DECODED: {freq_mhz:.1f} MHz — no voice content, not saved")
-            try:
-                os.unlink(wav)
-            except OSError:
-                pass
-            return
-        log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}, playing audio...")
-        save_decoded_audio(freq_mhz, wav, sig_type)
-        # Cross-platform audio playback (serialized with HAL voice)
-        with _playback_lock:
-            if IS_MACOS:
-                r2 = subprocess.run(["afplay", wav], capture_output=True, timeout=10)
+        if best_wav and best_score >= 2.0:
+            # REAL analog voice — play and save
+            log.info(f"DECODED: {freq_mhz:.1f} MHz ({best_mode}), type={sig_type}, playing audio...")
+            save_decoded_audio(freq_mhz, best_wav, sig_type)
+            with _playback_lock:
+                if IS_MACOS:
+                    r2 = subprocess.run(["afplay", best_wav], capture_output=True, timeout=15)
+                else:
+                    ensure_sink()
+                    r2 = subprocess.run(["paplay", best_wav], capture_output=True, timeout=15)
+            if r2.returncode != 0:
+                log.warning(f"VOICE PLAY FAIL: rc={r2.returncode}")
             else:
-                ensure_sink()
-                r2 = subprocess.run(["paplay", wav], capture_output=True, timeout=10)
-        if r2.returncode != 0:
-            log.warning(f"VOICE PLAY FAIL: rc={r2.returncode}")
+                log.info(f"VOICE PLAY OK: {freq_mhz:.1f} MHz")
+            os.unlink(best_wav)
         else:
-            log.info(f"VOICE PLAY OK: {freq_mhz:.1f} MHz")
-        os.unlink(wav)
+            # --- DIGITAL: DMR/D-Star/dPMR/YSF/NXDN/P25 via dsdccx ---
+            nfm_wav = next((w for w in cand_wavs if w.endswith('.wav')), None)
+            digital_text = ""
+            if nfm_wav:
+                dsd_out = decode_dsd(nfm_wav, mode='auto')
+                if dsd_out and '[DSD' not in dsd_out and len(dsd_out.strip()) > 3:
+                    digital_text = dsd_out.strip()
+            if digital_text:
+                log.info(f"DECODED DIGITAL: {freq_mhz:.1f} MHz: {digital_text[:120]}")
+                if best_wav:
+                    save_decoded_audio(freq_mhz, best_wav, "Digital " + sig_type)
+                speak(f"Digital radio decoded at {freq_mhz:.0f} megahertz. {digital_text[:80]}")
+            else:
+                log.info(f"DECODED: {freq_mhz:.1f} MHz — no voice content, not saved")
+            for w in cand_wavs:
+                try:
+                    os.unlink(w)
+                except OSError:
+                    pass
+        os.unlink(raw)
     except Exception as e:
         log.warning(f"VOICE EXCEPTION: {freq_mhz:.1f} MHz: {e}")
     finally:

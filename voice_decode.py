@@ -87,7 +87,25 @@ def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
     return None
 
 
-def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emphasis_us=300):
+def fine_tune(iq, fs):
+    """Find the strongest carrier in the capture and mix it to baseband.
+    AM demod previously lacked this — an AM signal offset from the capture
+    center was destroyed by aliasing when decimated to 48 kHz."""
+    import numpy as np
+    n_fft = min(len(iq), 8192)
+    spec = np.zeros(n_fft)
+    for off in range(0, len(iq) - n_fft, n_fft):
+        spec += np.abs(np.fft.fftshift(np.fft.fft(iq[off:off + n_fft]))) ** 2
+    freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / fs))
+    peak_idx = int(np.argmax(spec))
+    f_offset = freqs[peak_idx]
+    if abs(f_offset) > 10:  # only mix if actually offset
+        t = np.arange(len(iq)) / fs
+        iq = iq * np.exp(-2j * np.pi * f_offset * t)
+    return iq
+
+
+def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emphasis_us=300, already_tuned=False):
     """Proper NFM demodulator: fine-tune -> channel filter -> FM demod -> de-emphasis -> audio LPF.
 
     The IQ is fs Hz wide (e.g. 2 MHz) but a PMR/ham channel is only 12.5-25 kHz.
@@ -96,17 +114,8 @@ def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emp
     import numpy as np
     from scipy import signal as scipy_signal
 
-    # 1. Fine-tune: find strongest carrier within the capture and mix to baseband
-    n_fft = min(len(iq), 8192)
-    spec = np.zeros(n_fft)
-    for off in range(0, len(iq) - n_fft, n_fft):
-        spec += np.abs(np.fft.fftshift(np.fft.fft(iq[off:off + n_fft]))) ** 2
-    freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / fs))
-    peak_idx = np.argmax(spec)
-    f_offset = freqs[peak_idx]
-    if abs(f_offset) > 10:  # only mix if actually offset
-        t = np.arange(len(iq)) / fs
-        iq = iq * np.exp(-2j * np.pi * f_offset * t)
+    if not already_tuned:
+        iq = fine_tune(iq, fs)
 
     # 2. Channel filter: low-pass IQ to channel bandwidth (12.5 kHz PMR, 25 kHz wide)
     nyq = fs / 2.0
@@ -156,13 +165,16 @@ def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
     if len(iq) < 100:
         return None
 
+    # Fine-tune ONCE for ALL modes (AM path lacked it entirely)
+    iq = fine_tune(iq, sample_rate)
+
     if mode in ('nfm', 'wfm', 'auto', 'fm'):
         if mode == 'wfm':
             audio = demod_nfm(iq, sample_rate, channel_bw=180000, deviation=75000,
-                              audio_rate=48000, de_emphasis_us=75)
+                              audio_rate=48000, de_emphasis_us=75, already_tuned=True)
         else:
             audio = demod_nfm(iq, sample_rate, channel_bw=12500, deviation=2500,
-                              audio_rate=48000, de_emphasis_us=300)
+                              audio_rate=48000, de_emphasis_us=300, already_tuned=True)
     elif mode in ('am', 'usb', 'lsb'):
         from scipy import signal as scipy_signal
         # Channel filter at full rate is unstable when narrow — decimate first
