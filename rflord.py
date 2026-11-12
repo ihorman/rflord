@@ -376,6 +376,49 @@ def group_signals_by_type(signals, artemis_db=None):
     result.sort(key=lambda x: (-x['count'], -x['peak']))
     return result
 
+
+def describe_by_type(f, sig_type, std, power=None, artemis_db=None):
+    """Return a remark that MATCHES sig_type (same source that produced the type).
+    Never mix: if type came from drone DB, description comes from drone DB."""
+    sl = sig_type.lower()
+    if 'local radio' in sl:
+        return "Device's own WiFi/BT radio (self-interference)"
+    # Drone/camera types -> drone DB description (same source as type)
+    drone_kw = ('dji', 'orlan', 'zala', 'lancet', 'eleron', 'supercam',
+                'expresslrs', 'elrs', 'parrot', 'skydio', 'mavic', 'ocu', 'fpv')
+    if any(k in sl for k in drone_kw):
+        try:
+            from drone_rf_db import match_drone
+            matches = match_drone(f, None)
+            for score, name, desc, mod, bw_khz in matches:
+                if name.lower()[:5] in sl:
+                    return desc
+            if matches:
+                return matches[0][2]
+        except: pass
+        return "Drone control/video link"
+    if 'wifi' in sl:
+        return "WiFi 802.11 OFDM network"
+    if 'bluetooth' in sl:
+        return "Bluetooth FHSS short-range link"
+    if 'gsm' in sl or 'lte' in sl or '3g' in sl:
+        return "Cellular network"
+    if 'dvb' in sl or 'dab' in sl:
+        return "Digital broadcast"
+    if 'fm radio' in sl:
+        return "FM broadcast"
+    if 'satellite' in sl or 'gps' in sl or 'glonass' in sl or 'beidou' in sl or 'galileo' in sl:
+        return "Navigation satellite"
+    if 'ads-b' in sl:
+        return "Aircraft transponder (ADS-B)"
+    if 'pmr' in sl or 'frs' in sl or 'gmrs' in sl:
+        return "Walkie-talkie voice link"
+    if 'air band' in sl:
+        return "Aviation voice"
+    if 'ham' in sl:
+        return "Amateur radio"
+    return ''  # empty -> caller falls back to other sources
+
 def group_suspicious(signals, artemis_db=None):
     """Group suspicious signals by identification (artemis name or signal type)."""
     groups = {}
@@ -399,9 +442,9 @@ def group_suspicious(signals, artemis_db=None):
         else:
             art = identify_signal(f_strong, artemis_db) if artemis_db else None
         
-        # Build remark from multiple sources
-        remark = ''
-        if art:
+        # Build remark — CONSISTENT with the type (same source that produced it)
+        remark = describe_by_type(f_strong, key, strongest['std'], strongest['peak'], artemis_db)
+        if not remark and art:
             remark = art.get('description', '') or ''
         
         # If no remark from Artemis, try rf_protocols
@@ -1887,11 +1930,11 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     
     # Get CURRENT terminal size (resizes dynamically)
     h, w = stdscr.getmaxyx()
-    stdscr.erase()
     
     # Full width, no caps
     W = w
     
+    # Compute data BEFORE erase — if this fails, old screen stays visible
     suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")],
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
@@ -1899,6 +1942,8 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                 key=lambda x: x['peak'], reverse=True)
     ok_grouped = group_signals_by_type(ok, artemis_db)
+    
+    stdscr.erase()  # Clear only AFTER data is ready
     
     # Clamp cursor
     if _cursor_active:
@@ -2200,6 +2245,8 @@ def main_curses(stdscr, devices):
             (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
             (5150, 5900, 500000, 3),
         ]
+    # Voice bands FIRST — catch intermittent transmissions (PMR/ham) before slow wide bands
+    bands.sort(key=lambda b: (0 if b[0] < 700 else 1, b[0]))
     log.info(f"Scan bands from config: {[(a, b) for a, b, _, _ in bands]}")
     
     scan_num = 0
@@ -3128,6 +3175,8 @@ def main_ansi(devices=None):
             (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
             (5150, 5900, 500000, 3),
         ]
+    # Voice bands FIRST — catch intermittent transmissions (PMR/ham) before slow wide bands
+    bands.sort(key=lambda b: (0 if b[0] < 700 else 1, b[0]))
     log.info(f"Scan bands from config: {[(a, b) for a, b, _, _ in bands]}")
     
     scan_num = 0

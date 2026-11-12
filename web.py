@@ -382,14 +382,32 @@ class WebDashboard:
         from functools import wraps
         from flask import request as flask_request
 
-        # Basic auth credentials — fail closed if not configured
+        # Basic auth credentials — env vars first, then config file, then generate ONCE and persist
         WEB_USER = os.environ.get('RFLORD_WEB_USER', '')
         WEB_PASS = os.environ.get('RFLORD_WEB_PASS', '')
         if not WEB_USER or not WEB_PASS:
-            import secrets
-            WEB_USER = WEB_USER or 'rflord'
-            WEB_PASS = WEB_PASS or secrets.token_urlsafe(16)
-            log.warning("RFLORD_WEB_USER/PASS not set — generated random password: %s", WEB_PASS)
+            # Try to load persisted credentials from config
+            cred_file = os.path.expanduser('~/.config/rflord/web_auth.txt')
+            if os.path.exists(cred_file):
+                try:
+                    with open(cred_file) as cf:
+                        lines = cf.read().strip().split('\n')
+                    if len(lines) >= 2:
+                        WEB_USER = WEB_USER or lines[0]
+                        WEB_PASS = WEB_PASS or lines[1]
+                except: pass
+            if not WEB_USER or not WEB_PASS:
+                import secrets
+                WEB_USER = WEB_USER or 'rflord'
+                WEB_PASS = WEB_PASS or secrets.token_urlsafe(16)
+                try:
+                    os.makedirs(os.path.dirname(cred_file), exist_ok=True)
+                    with open(cred_file, 'w') as cf:
+                        cf.write(f"{WEB_USER}\n{WEB_PASS}\n")
+                    os.chmod(cred_file, 0o600)
+                except Exception as e:
+                    log.warning(f"Could not persist web credentials: {e}")
+                log.warning("RFLORD_WEB_USER/PASS not set — generated password saved to %s", cred_file)
 
         def check_auth(username, password):
             return username == WEB_USER and password == WEB_PASS

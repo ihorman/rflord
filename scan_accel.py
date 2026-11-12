@@ -3,9 +3,23 @@ import time
 from collections import defaultdict
 
 
+# Voice radio bands — NEVER skip these (transmissions are intermittent by nature)
+VOICE_BANDS = [
+    (108, 137), (144, 148), (150, 174),   # air/ham/VHF
+    (406, 410), (430, 470), (446, 447), (462, 468),  # beacons/UHF/PMR/FRS
+]
+
+def _is_voice_band(f_lo, f_hi):
+    for lo, hi in VOICE_BANDS:
+        if f_lo >= lo - 1 and f_hi <= hi + 1:
+            return True
+    return False
+
+
 class ScanAccelerator:
-    """Track band activity and skip empty bands after N consecutive empty scans."""
-    
+    """Track band activity and skip empty bands after N consecutive empty scans.
+    Voice radio bands are NEVER skipped — transmissions are intermittent."""
+
     def __init__(self, skip_after_empty=3):
         self.skip_after_empty = skip_after_empty
         self.band_empty_count = {}  # (f_lo, f_hi) -> consecutive empty count
@@ -21,7 +35,9 @@ class ScanAccelerator:
             self.band_empty_count[key] = self.band_empty_count.get(key, 0) + 1
     
     def should_skip(self, f_lo, f_hi):
-        """Should we skip this band this scan?"""
+        """Should we skip this band this scan? Voice bands are NEVER skipped."""
+        if _is_voice_band(f_lo, f_hi):
+            return False
         key = (f_lo, f_hi)
         return self.band_empty_count.get(key, 0) >= self.skip_after_empty
     
