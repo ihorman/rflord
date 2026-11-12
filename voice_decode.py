@@ -87,6 +87,33 @@ def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
     return None
 
 
+def suppress_stationary(audio, fs):
+    """Subtract stationary tones (heterodyne whistle, hiss) from voice.
+
+    Whistles are constant-frequency lines that survive any bandpass;
+    spectral subtraction with the quietest frames as the noise profile
+    removes them while speech (non-stationary) is preserved."""
+    try:
+        import numpy as np
+        from scipy import signal as scipy_signal
+        nper = 1024
+        if len(audio) < nper * 4:
+            return audio
+        f_stft, t_stft, Z = scipy_signal.stft(audio, fs=fs, nperseg=nper, noverlap=nper // 2)
+        mag = np.abs(Z)
+        # noise profile: per-bin MINIMUM over time (stationary parts only)
+        noise = np.percentile(mag, 10, axis=1, keepdims=True)
+        # subtract 2x the noise floor, keep phase
+        gain = np.maximum(mag - 2.0 * noise, 0) / (mag + 1e-9)
+        Zc = Z * gain
+        _, out = scipy_signal.istft(Zc, fs=fs, nperseg=nper, noverlap=nper // 2)
+        if len(out) < len(audio):
+            out = np.pad(out, (0, len(audio) - len(out)))
+        return out[:len(audio)].astype(np.float32)
+    except Exception:
+        return audio
+
+
 def fine_tune(iq, fs):
     """Find the strongest carrier in the capture and mix it to baseband.
     AM demod previously lacked this — an AM signal offset from the capture
