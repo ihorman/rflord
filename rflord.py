@@ -2184,16 +2184,31 @@ def main_curses(stdscr, devices):
         except Exception as ex:
             log.debug(f"BLE scan skip: {ex}")
 
-    bands = [
-        (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
-        (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
-        (5150, 5900, 500000, 3),
-    ]
+    # Read scan bands from config (Hz) — fallback to defaults if absent
+    _cfg_bands = _cfg.get('scan', {}).get('bands')
+    if _cfg_bands:
+        bands = []
+        for b in _cfg_bands:
+            f_lo = int(b['start']) // 1000000   # Hz -> MHz
+            f_hi = int(b['stop']) // 1000000
+            bw = max(500000, min(2000000, int(b.get('step', 1000000)) * 2)) & ~0x7FFF
+            n = 3
+            bands.append((f_lo, f_hi, bw, n))
+    else:
+        bands = [
+            (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
+            (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
+            (5150, 5900, 500000, 3),
+        ]
+    log.info(f"Scan bands from config: {[(a, b) for a, b, _, _ in bands]}")
     
     scan_num = 0
     known_freqs = {}   # freq -> first seen time (for new signal detection)
     last_seen = {}     # freq -> last seen time (for "Last Seen" display)
     alert_count = 0
+    # Signal cache: keeps signals visible across scans (TTL-based, like a real receiver)
+    _signal_cache = {}   # key=round(freq) -> {'sig': sig_dict, 'ts': time.time()}
+    SIGNAL_CACHE_TTL = 300  # seconds to keep a signal in the table after last seen
     voice_enabled = True
     start_time = time.time()
 
@@ -2377,6 +2392,22 @@ def main_curses(stdscr, devices):
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
+
+        # Merge scan results into signal cache (keep strongest per freq)
+        now_cache = time.time()
+        for s in all_signals:
+            key = round(s['freq'] / 1e6)
+            cur = _signal_cache.get(key)
+            if cur is None or s['peak'] >= cur['sig']['peak']:
+                _signal_cache[key] = {'sig': s, 'ts': now_cache}
+            else:
+                cur['ts'] = now_cache  # seen again — refresh TTL
+        # Prune only OLD entries (not seen for SIGNAL_CACHE_TTL)
+        stale = [k for k, v in _signal_cache.items() if now_cache - v['ts'] > SIGNAL_CACHE_TTL]
+        for k in stale:
+            del _signal_cache[k]
+        # Table shows cached signals (recent) + current scan merged
+        unique = list(v['sig'] for v in _signal_cache.values())
 
         # Blacklist filtering
         unique = filter_blacklisted(unique, blacklist)
@@ -3081,11 +3112,23 @@ def main_ansi(devices=None):
     ensure_sink()
     artemis_db = load_artemis()
     
-    bands = [
-        (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
-        (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
-        (5150, 5900, 500000, 3),
-    ]
+    # Read scan bands from config (Hz) — fallback to defaults if absent
+    _cfg_bands = _cfg.get('scan', {}).get('bands')
+    if _cfg_bands:
+        bands = []
+        for b in _cfg_bands:
+            f_lo = int(b['start']) // 1000000   # Hz -> MHz
+            f_hi = int(b['stop']) // 1000000
+            bw = max(500000, min(2000000, int(b.get('step', 1000000)) * 2)) & ~0x7FFF
+            n = 3
+            bands.append((f_lo, f_hi, bw, n))
+    else:
+        bands = [
+            (88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3),
+            (1000, 1700, 2000000, 3), (1700, 2500, 1000000, 3), (2500, 3500, 1000000, 3),
+            (5150, 5900, 500000, 3),
+        ]
+    log.info(f"Scan bands from config: {[(a, b) for a, b, _, _ in bands]}")
     
     scan_num = 0
     known_freqs = {}
