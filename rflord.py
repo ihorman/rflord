@@ -6,7 +6,6 @@ Author: Ihor Kolodyuk
 """
 
 import warnings
-warnings.filterwarnings("ignore")
 import os
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
@@ -176,7 +175,10 @@ def detect_device():
     if not _has_hackrf_in_usb(usb_output) and _has_portapack_in_usb(usb_output):
         print("PortaPack detected, switching to HackRF mode...", flush=True)
         if IS_LINUX:
-            import serial
+            try:
+                import serial
+            except ImportError:
+                serial = None
             switched = False
             for port in ["/dev/ttyACM1", "/dev/ttyACM0"]:
                 try:
@@ -332,8 +334,8 @@ def get_band(f):
     bands = [
         (88, 108, "FM"), (108, 137, "AIR"), (144, 148, "2m"), (150, 174, "VHF"),
         (400, 470, "UHF"), (470, 608, "DTV"), (806, 960, "GSM"),
-        (960, 1215, "L"), (1700, 2000, "3G"), (2300, 2700, "LTE"),
-        (2400, 2500, "WiFi"), (5150, 5900, "5G"),
+        (960, 1215, "L"), (1700, 2000, "3G"), (2400, 2500, "WiFi"),
+        (2300, 2700, "LTE"), (5150, 5900, "5G"),
     ]
     for lo, hi, name in bands:
         if lo <= f <= hi:
@@ -667,79 +669,6 @@ def est_distance_m(freq_mhz, power_dbfs):
     d_km = max(0.001, min(500, d_km))
     return d_km * 1000
 
-def identify_signal_type(freq_mhz, power_dbfs, std):
-    """Identify what a signal likely is based on frequency and characteristics."""
-    # Cellular
-    if 935 <= freq_mhz <= 960:
-        return "GSM900"
-    if 1805 <= freq_mhz <= 1880:
-        return "GSM1800"
-    if 2110 <= freq_mhz <= 2170:
-        return "3G/LTE"
-    if 791 <= freq_mhz <= 862:
-        return "LTE800"
-    if 2620 <= freq_mhz <= 2690:
-        return "LTE2600"
-    
-    # WiFi 2.4 GHz
-    wifi_ch = {1:2412, 2:2417, 3:2422, 4:2427, 5:2432, 6:2437, 7:2442, 8:2447, 9:2452, 10:2457, 11:2462, 12:2467, 13:2472}
-    for ch, center in wifi_ch.items():
-        if abs(freq_mhz - center) < 3:
-            return f"WiFi Ch{ch}"
-    if 2400 <= freq_mhz <= 2500:
-        return "WiFi 2.4GHz"
-    
-    # WiFi 5 GHz (non-overlapping with FPV)
-    if 5150 <= freq_mhz <= 5725:
-        return "WiFi 5GHz"
-    
-    # FPV band (5725-5875 MHz) — shared with WiFi UNII-3
-    # FPV is narrowband analog video, WiFi is wideband OFDM
-    if 5725 <= freq_mhz <= 5875:
-        if std < 2 and power_dbfs > -30:
-            return "FPV Video"
-        elif std < 3:
-            return "FPV/WiFi"
-        else:
-            return "WiFi 5GHz"
-    
-    # Broadcast
-    if 88 <= freq_mhz <= 108:
-        return "FM Radio"
-    if 174 <= freq_mhz <= 230:
-        return "DAB/DVB-T"
-    if 470 <= freq_mhz <= 790:
-        return "DVB-T"
-    
-    # Aviation
-    if 108 <= freq_mhz <= 137:
-        return "Air Band"
-    if 1089 <= freq_mhz <= 1091:
-        return "ADS-B"
-    if 1574 <= freq_mhz <= 1576:
-        return "GPS L1"
-    
-    # Amateur
-    if 144 <= freq_mhz <= 148:
-        return "2m Ham"
-    if 430 <= freq_mhz <= 470:
-        return "70cm Ham/PMR"
-    
-    # ISM
-    if 433 <= freq_mhz <= 435:
-        return "ISM433"
-    if 868 <= freq_mhz <= 870:
-        return "ISM868"
-    if 915 <= freq_mhz <= 928:
-        return "ISM915"
-    
-    # Surveillance (only if narrowband and strong)
-    if 900 <= freq_mhz <= 928 and std < 2 and power_dbfs > -30:
-        return "Possible Camera"
-    if 1080 <= freq_mhz <= 1300 and std < 2 and power_dbfs > -30:
-        return "Possible Camera"
-    
-    return "Unknown"
 
 def speak_distance(dist_str):
     """Convert distance string to spoken text: '284m' -> '284 meters'."""
@@ -811,10 +740,10 @@ def speak(text):
     if _speaking:
         log.info(f"SPEAK SKIP (already speaking): {text[:60]}")
         return
+    _speaking = True  # Set BEFORE thread start to prevent TOCTOU race
     log.info(f"SPEAK: {text[:100]}")
     def _speak_thread():
         global _speaking
-        _speaking = True
         try:
             raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
             out = tempfile.mktemp(suffix='.wav', prefix='hal_')
@@ -1577,9 +1506,8 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     # === STEP 3: Signatures DB (non-surveillance) ===
     try:
         from signatures_db import SignaturesDB
-        db = SignaturesDB()
-        sigs = db.identify_freq(freq_mhz, tolerance_mhz=1.0)
-        db.close()
+        with SignaturesDB() as db:
+            sigs = db.identify_freq(freq_mhz, tolerance_mhz=1.0)
         if sigs:
             # Filter out generic "surveillance" entries
             for s in sigs:
@@ -2132,7 +2060,7 @@ def main_curses(stdscr, devices):
     stdscr.timeout(-1)
     
     for i, arg in enumerate(sys.argv[1:]):
-        if arg == "--interval" and i + 2 <= len(sys.argv):
+        if arg == "--interval" and i + 2 < len(sys.argv):
             INTERVAL = int(sys.argv[i + 2])
         if arg == "--threshold" and i + 2 <= len(sys.argv):
             VOICE_THRESHOLD = int(sys.argv[i + 2])
@@ -2261,8 +2189,8 @@ def main_curses(stdscr, devices):
             import json
             with open(state_file) as f:
                 state = json.load(f)
-            known_freqs = {int(k): v for k, v in state.get('known_freqs', {}).items()}
-            last_seen = {int(k): v for k, v in state.get('last_seen', {}).items()}
+            known_freqs = {int(k): v for k, v in state.get('known_freqs', {}).items() if k.isdigit()}
+            last_seen = {int(k): v for k, v in state.get('last_seen', {}).items() if k.isdigit()}
             alert_count = state.get('alert_count', 0)
             os.unlink(state_file)
         except: pass
@@ -2848,7 +2776,7 @@ def main_curses(stdscr, devices):
                 vw_thread.start()
                 _hackrf_workers.append(vw_thread)
                 
-                count = len(above_threshold)
+                count = len(announcements) if announcements else len(above_threshold)
                 if count == 1:
                     msg = f"Alert. New signal at {announcements[0]}."
                 elif count == 2:
@@ -3321,7 +3249,7 @@ def main_ansi(devices=None):
                         if not voice_result:
                             voice_result = "analog voice sample, saved to decoded folder"
                         break
-                count = len(above_threshold)
+                count = len(announcements) if announcements else len(above_threshold)
                 if count == 1:
                     msg = f"Alert. New signal at {announcements[0]}."
                 elif count == 2:
