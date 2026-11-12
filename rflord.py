@@ -1663,17 +1663,38 @@ def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
     except:
         return None
 
+_hackrf_lock = threading.Lock()  # ONE HackRF user at a time (sweep workers + capture)
+
+def _kill_stale_hackrf():
+    """Kill orphaned hackrf child processes still holding the USB device
+    (watchdog-abandoned sweep threads leave hackrf_sweep running -> every
+    later hackrf_transfer fails with 'Resource busy')."""
+    for proc in ("hackrf_transfer", "hackrf_sweep"):
+        try:
+            subprocess.run(["pkill", "-x", proc], capture_output=True, timeout=3)
+        except Exception:
+            pass
+    time.sleep(0.3)
+
 def play_voice_sample(freq_mhz):
     try:
         freq_hz = int(freq_mhz * 1e6)
         raw = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
         wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
         log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ...")
-        r = subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
-                        "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
-                       capture_output=True, timeout=10)
-        if r.returncode != 0:
-            log.warning(f"VOICE CAPTURE FAIL: hackrf_transfer rc={r.returncode} stderr={r.stderr[:200]}")
+        r = None
+        with _hackrf_lock:
+            for attempt in range(3):
+                _kill_stale_hackrf()  # sweep may still hold the device
+                r = subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
+                                "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
+                               capture_output=True, timeout=15)
+                if r.returncode == 0:
+                    break
+                log.warning(f"VOICE CAPTURE retry {attempt+1}: rc={r.returncode} stderr={r.stderr[:120]}")
+                time.sleep(1.0)
+        if not r or r.returncode != 0:
+            log.warning(f"VOICE CAPTURE FAIL: hackrf_transfer rc={r.returncode if r else 'none'}")
             return
         if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
             log.warning(f"VOICE CAPTURE FAIL: raw file missing or too small ({os.path.getsize(raw) if os.path.exists(raw) else 0} bytes)")
@@ -1718,6 +1739,7 @@ def is_voice_signal(freq_mhz, std, sig_type=""):
     if 446 <= freq_mhz <= 447: return True  # PMR446
     if 462 <= freq_mhz <= 468: return True  # FRS/GMRS
     if 108 <= freq_mhz <= 137: return True  # Air band
+    if 137 <= freq_mhz <= 150: return True  # VHF low (130 MHz radios, marine/ham)
     if 150 <= freq_mhz <= 174: return True  # VHF commercial
     if 450 <= freq_mhz <= 470: return True  # UHF commercial
     return False
@@ -2408,7 +2430,20 @@ def main_curses(stdscr, devices):
         all_signals = []
         sweep_failures = set()  # (f_lo,f_hi) with FAILED sweeps — must not retire bands
         h, w = stdscr.getmaxyx()
-        scan_bands = accel.get_active_bands(bands) if accel else bands
+        # FAST VOICE REVISIT: voice/intermittent bands are scanned EVERY cycle,
+        # wide data bands rotate ONE per cycle. A walkie-talkie transmission is
+        # a few seconds — a 6-minute full-band cycle misses it almost always.
+        from scan_accel import _overlaps, VOICE_BANDS, INTERMITTENT_BANDS
+        _voice_bands = [b for b in bands if _overlaps(b[0], b[1], VOICE_BANDS)]
+        _wide_bands = [b for b in bands if not _overlaps(b[0], b[1], VOICE_BANDS)]
+        scan_bands = list(_voice_bands)
+        if _wide_bands:
+            if not hasattr(main_curses, '_wide_rot'):
+                main_curses._wide_rot = 0
+            _wb = accel.get_active_bands(_wide_bands) if accel else _wide_bands
+            if _wb:
+                scan_bands.append(_wb[main_curses._wide_rot % len(_wb)])
+                main_curses._wide_rot += 1
 
         # Dual-SDR: scan in parallel with threads
         band_assignment = _assign_bands(scan_bands, devices)
