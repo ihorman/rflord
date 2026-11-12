@@ -2781,17 +2781,18 @@ def main_curses(stdscr, devices):
                 vw_thread.start()
                 _hackrf_workers.append(vw_thread)
                 
-                count = len(announcements) if announcements else len(above_threshold)
-                if count == 1:
-                    msg = f"Alert. New signal at {announcements[0]}."
-                elif count == 2:
-                    msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                if announcements:
+                    if len(announcements) == 1:
+                        msg = f"Alert. New signal at {announcements[0]}."
+                    elif len(announcements) == 2:
+                        msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                    else:
+                        msg = f"Alert. {len(announcements)} new signals above threshold. Strongest at {announcements[0]}."
+                        if len(announcements) > 2:
+                            msg += f" Also at {announcements[1]}."
+                    speak(msg)
                 else:
-                    msg = f"Alert. {count} new signals above threshold. Strongest at {announcements[0]}."
-                    if count > 2:
-                        msg += f" Also at {announcements[1]}."
-                
-                speak(msg)
+                    speak(f"Alert. {len(above_threshold)} new signals detected.")
             else:
                 s0 = new_suspicious[0]
                 f0 = s0['freq'] / 1e6
@@ -3254,15 +3255,17 @@ def main_ansi(devices=None):
                         if not voice_result:
                             voice_result = "analog voice sample, saved to decoded folder"
                         break
-                count = len(announcements) if announcements else len(above_threshold)
-                if count == 1:
-                    msg = f"Alert. New signal at {announcements[0]}."
-                elif count == 2:
-                    msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                if announcements:
+                    if len(announcements) == 1:
+                        msg = f"Alert. New signal at {announcements[0]}."
+                    elif len(announcements) == 2:
+                        msg = f"Alert. Two new signals. First at {announcements[0]}. Second at {announcements[1]}."
+                    else:
+                        msg = f"Alert. {len(announcements)} new signals above threshold. Strongest at {announcements[0]}."
+                        if len(announcements) > 2:
+                            msg += f" Also at {announcements[1]}."
                 else:
-                    msg = f"Alert. {count} new signals above threshold. Strongest at {announcements[0]}."
-                    if count > 2:
-                        msg += f" Also at {announcements[1]}."
+                    msg = f"Alert. {len(above_threshold)} new signals detected."
                 if voice_result:
                     msg += f" Detected {voice_result}."
                 speak(msg)
