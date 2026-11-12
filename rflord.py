@@ -817,7 +817,7 @@ def _suppress_start():
             cmd = ["hackrf_transfer", "-t", noise, "-f", str(int(freq)),
                    "-s", "2000000", "-a", "1", "-x", "40", "-n", "120000000"]
             try:
-                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 _suppress_procs.append(p)
                 started += 1
                 log.info(f"SUPPRESS: TX on {freq/1e6:.1f} MHz (PID {p.pid})")
@@ -1580,8 +1580,8 @@ def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
 def play_voice_sample(freq_mhz):
     try:
         freq_hz = int(freq_mhz * 1e6)
-        raw = tempfile.mktemp(suffix='.raw', prefix='voice_')
-        wav = tempfile.mktemp(suffix='.wav', prefix='voice_')
+        raw = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
+        wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
         log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz, capturing IQ...")
         r = subprocess.run(["hackrf_transfer", "-r", raw, "-f", str(freq_hz),
                         "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
