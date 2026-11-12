@@ -103,8 +103,10 @@ def suppress_stationary(audio, fs):
         mag = np.abs(Z)
         # noise profile: per-bin MINIMUM over time (stationary parts only)
         noise = np.percentile(mag, 10, axis=1, keepdims=True)
-        # subtract 2x the noise floor, keep phase
-        gain = np.maximum(mag - 2.0 * noise, 0) / (mag + 1e-9)
+        # Gentle subtraction with a FLOOR: aggressive 2x + zero floor
+        # produced musical-noise crunch ('compressed' sound). Keep at
+        # least 35% of every bin — whistle goes, speech body stays.
+        gain = np.maximum(mag - 1.2 * noise, 0.35 * mag) / (mag + 1e-9)
         Zc = Z * gain
         _, out = scipy_signal.istft(Zc, fs=fs, nperseg=nper, noverlap=nper // 2)
         if len(out) < len(audio):
@@ -115,37 +117,42 @@ def suppress_stationary(audio, fs):
 
 
 def fine_tune(iq, fs):
-    """Find the strongest carrier in the capture and mix it to baseband.
-    AM demod previously lacked this — an AM signal offset from the capture
-    center was destroyed by aliasing when decimated to 48 kHz.
+    """Find the strongest carrier and mix it to baseband.
 
-    CRITICAL: HackRF has a large DC offset spike EXACTLY at the tuned
-    frequency. Without removing it, the 'strongest carrier' is always the
-    DC spike and the real signal is filtered out as out-of-channel noise."""
+    Two traps handled here:
+    1. HackRF DC spike sits at the tuned frequency — ignore it in the
+       peak SEARCH, but NEVER subtract it from the signal: for AM the
+       real carrier IS at DC and subtracting the mean killed it
+       (correlation with speech was 0.003!).
+    2. A stronger neighbor within the search window can hijack tuning —
+       window is +/-350 kHz (covers the sweep's half-bin freq error).
+    """
     import numpy as np
-    # Remove DC offset (the center-frequency spike)
-    iq = iq - np.mean(iq)
     n_fft = min(len(iq), 8192)
     spec = np.zeros(n_fft)
     for off in range(0, len(iq) - n_fft, n_fft):
         spec += np.abs(np.fft.fftshift(np.fft.fft(iq[off:off + n_fft]))) ** 2
     freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / fs))
-    # ONLY search near the tuned frequency: a nearby repeater at -800 kHz
-    # was stronger than the target radio, so we demodulated the WRONG
-    # channel. The sweep's peak-bin freq is accurate to ~half a bin
-    # (~230 kHz), so a +/-350 kHz window covers the target.
+    dc_idx = int(np.argmin(np.abs(freqs)))
+    dc_power = float(spec[dc_idx])
+
+    # Peak search ignores the DC bin and its immediate neighbors
+    spec_clean = spec.copy()
+    spec_clean[max(0, dc_idx - 2):dc_idx + 3] = 0.0
     window = (freqs >= -350000) & (freqs <= 350000)
-    if np.any(window):
-        w_spec = np.where(window, spec, 0)
-        peak_idx = int(np.argmax(w_spec))
-    else:
-        peak_idx = int(np.argmax(spec))
-    f_offset = freqs[peak_idx]
+    w_spec = np.where(window, spec_clean, 0.0)
+    peak_idx = int(np.argmax(w_spec))
+    peak_power = float(w_spec[peak_idx])
+
+    # Signal at center? (DC dominates or no other peak) -> leave untouched
+    if peak_power < 0.5 * dc_power or peak_power <= 1e-12:
+        return iq
+
+    f_offset = float(freqs[peak_idx])
     if abs(f_offset) > 10:  # only mix if actually offset
         t = np.arange(len(iq)) / fs
         iq = iq * np.exp(-2j * np.pi * f_offset * t)
     return iq
-
 
 def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emphasis_us=300, already_tuned=False):
     """Proper NFM demodulator: fine-tune -> channel filter -> FM demod -> de-emphasis -> audio LPF.
@@ -196,6 +203,38 @@ def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emp
     return audio
 
 
+def demod_am_sync(iq, fs, audio_rate=48000):
+    """Coherent (synchronous) AM demodulation.
+
+    Envelope detection multiplies noise by signal strength — raspy, weak,
+    'compressed' audio. Coherent detection tracks carrier phase through a
+    narrow loop and mixes down cleanly: better intelligibility, natural
+    loudness, no over-compression.
+    """
+    import numpy as np
+    from scipy import signal as scipy_signal
+    from math import gcd
+
+    g = gcd(int(fs), audio_rate)
+    real = scipy_signal.resample_poly(np.real(iq), audio_rate // g, int(fs) // g)
+    imag = scipy_signal.resample_poly(np.imag(iq), audio_rate // g, int(fs) // g)
+    c = real + 1j * imag
+
+    # Channel filter: air-band voice ~6 kHz
+    sos = scipy_signal.butter(4, 3000 / (audio_rate / 2.0), 'low', output='sos')
+    c = scipy_signal.sosfiltfilt(sos, c)
+
+    # Carrier phase estimate: narrow loop filter at DC
+    sos_loop = scipy_signal.butter(2, 25.0, 'low', fs=audio_rate, output='sos')
+    carrier = scipy_signal.sosfiltfilt(sos_loop, c)
+    phase = np.angle(carrier + 1e-12)
+
+    # Coherent projection
+    audio = np.real(c * np.exp(-1j * phase))
+    audio = audio - np.mean(audio)  # remove carrier DC AFTER demod
+    return audio.astype(np.float32)
+
+
 def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
     """Convert IQ raw file to demodulated audio WAV (hackrf int8 interleaved)."""
     if output is None:
@@ -218,31 +257,27 @@ def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
             audio = demod_nfm(iq, sample_rate, channel_bw=12500, deviation=2500,
                               audio_rate=48000, de_emphasis_us=300, already_tuned=True)
     elif mode in ('am', 'usb', 'lsb'):
-        from scipy import signal as scipy_signal
-        # Channel filter at full rate is unstable when narrow — decimate first
-        from math import gcd
-        g = gcd(int(sample_rate), 48000)
-        audio_rate = 48000
-        # Resample IQ components down to 48 kHz (channel width still preserved)
-        i_rs = scipy_signal.resample_poly(np.real(iq), audio_rate // g, int(sample_rate) // g)
-        q_rs = scipy_signal.resample_poly(np.imag(iq), audio_rate // g, int(sample_rate) // g)
-        # Channel filter at 48 kHz: AM air band 6 kHz wide
-        sos = scipy_signal.butter(4, 3000 / (audio_rate / 2.0), 'low', output='sos')
-        i_f = scipy_signal.sosfiltfilt(sos, i_rs)
-        q_f = scipy_signal.sosfiltfilt(sos, q_rs)
-        audio = np.sqrt(i_f**2 + q_f**2)   # envelope detection
-        audio = audio - np.mean(audio)      # remove DC
-        peak = np.max(np.abs(audio))
-        if peak > 0:
-            audio = audio / peak * 0.8
+        # Coherent AM detection — envelope demod sounded compressed/weak
+        audio = demod_am_sync(iq, sample_rate)
     else:
         # Digital modes: NFM demod as input for DSD
         audio = demod_nfm(iq, sample_rate, channel_bw=12500, deviation=2500,
                           audio_rate=48000, de_emphasis_us=300)
 
+    # Gentle level: scale by 95th percentile to natural loudness.
+    # NO tanh/limiting compression — the previous peak/tanh chain made
+    # speech sound over-compressed ('пережатый').
+    import numpy as _np
+    audio = _np.asarray(audio, dtype=_np.float32)
+    audio = audio - _np.mean(audio)
+    p95 = float(_np.percentile(_np.abs(audio), 95))
+    if p95 > 1e-6:
+        audio = audio * (0.72 / p95)
+    audio = _np.clip(audio, -1.0, 1.0)  # safety only
+
     # Write 48 kHz 16-bit mono WAV
     import wave
-    audio_16 = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+    audio_16 = (audio * 32767).astype(np.int16)
     with wave.open(output, 'w') as w:
         w.setnchannels(1)
         w.setsampwidth(2)

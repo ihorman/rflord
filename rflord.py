@@ -230,7 +230,7 @@ def detect_device():
     # Method 2: Try hackrf_sweep directly (works even if hackrf_info fails)
     if not devices:
         try:
-            r = subprocess.run([HACKRF_SWEEP_BIN, "-f", "100:101", "-w", "100000", "-l", "32", "-g", "40", "-a", "1", "-N", "1"],
+            r = subprocess.run([HACKRF_SWEEP_BIN, "-f", "100:101", "-w", "100000"] + rx_gain_args() + ["-N", "1"],
                              capture_output=True, text=True, timeout=10)
             if r.returncode == 0 and "Sweeping" in r.stderr:
                 print("HackRF detected via hackrf_sweep", flush=True)
@@ -254,7 +254,8 @@ def detect_device():
     return devices
 
 def hackrf_sweep(f_lo, f_hi, bw=2000000, n=3):
-    cmd = f"{HACKRF_SWEEP_BIN} -f {f_lo}:{f_hi} -w {bw} -l 32 -g 40 -a 1 -N {n}"
+    gains = ' '.join(rx_gain_args())
+    cmd = f"{HACKRF_SWEEP_BIN} -f {f_lo}:{f_hi} -w {bw} {gains} -N {n}"
     try:
         with _hackrf_lock:  # never run while a voice/camera capture holds the device
             r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=45)
@@ -876,6 +877,21 @@ def _generate_noise(path, duration_s=10, rate=2000000):
     n = int(rate * duration_s)
     samples = np.random.randint(-127, 128, n, dtype=np.int8)
     samples.tofile(path)
+
+def rx_gain_args():
+    """Receiver gains from config (scan.gain). Max gain (lna32 + amp)
+    overloads the HackRF front end near strong transmitters and creates
+    phantom intermod signals — user's PortaPack confirmed 446 MHz is
+    EMPTY while max-gain sweeps showed fake peaks at +36 dB."""
+    try:
+        g = _cfg.get('scan', {}).get('gain', {}) or {}
+        lna = int(g.get('lna', 24))
+        vga = int(g.get('vga', 30))
+        amp = 1 if g.get('amp', False) else 0
+    except Exception:
+        lna, vga, amp = 24, 30, 0
+    return ["-l", str(lna), "-g", str(vga), "-a", str(amp)]
+
 
 def _suppress_start():
     """Start transmitting noise on selected frequencies."""
@@ -1789,7 +1805,7 @@ def play_voice_sample(freq_mhz):
                 r = None
                 for attempt in range(2):
                     r = subprocess.run(["hackrf_transfer", "-r", chunk, "-f", str(freq_hz),
-                                    "-s", "2000000", "-n", "4000000", "-l", "32", "-g", "40", "-a", "1"],
+                                    "-s", "2000000", "-n", "4000000"] + rx_gain_args(),
                                    capture_output=True, timeout=15)
                     if r.returncode == 0:
                         break

@@ -19,6 +19,13 @@ history:
   enabled: true
   max_days: 30
 scan:
+  # Receiver gains. Max gain (lna32 + amp) overloads the front end near
+  # strong transmitters -> phantom intermod "signals". Verified against a
+  # PortaPack: real air was EMPTY while max-gain sweeps showed fake peaks.
+  gain:
+    lna: 24
+    vga: 30
+    amp: false
   bands:
   - start: 108000000
     step: 100000
