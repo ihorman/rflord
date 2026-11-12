@@ -382,9 +382,18 @@ class WebDashboard:
         from functools import wraps
         from flask import request as flask_request
 
-        # Basic auth credentials — env vars first, then config file, then generate ONCE and persist
-        WEB_USER = os.environ.get('RFLORD_WEB_USER', '')
-        WEB_PASS = os.environ.get('RFLORD_WEB_PASS', '')
+        # Basic auth credentials — config.yaml, then env vars, then persisted file, then generate ONCE
+        WEB_USER = ''
+        WEB_PASS = ''
+        try:
+            from config import load_config
+            _wcfg = load_config().get('web', {})
+            WEB_USER = _wcfg.get('user', '') or ''
+            WEB_PASS = _wcfg.get('pass', '') or ''
+        except Exception:
+            pass
+        WEB_USER = WEB_USER or os.environ.get('RFLORD_WEB_USER', '')
+        WEB_PASS = WEB_PASS or os.environ.get('RFLORD_WEB_PASS', '')
         if not WEB_USER or not WEB_PASS:
             # Try to load persisted credentials from config
             cred_file = os.path.expanduser('~/.config/rflord/web_auth.txt')
