@@ -56,6 +56,8 @@ class TestClassify:
 
     def test_drone_bursty_danger(self):
         assert classify(2437, -25, 8) == "danger"  # std=8 bursty = DJI drone
+        assert classify(2437, -25, 6) == "danger"  # std=6 borderline = DJI drone
+        assert classify(2437, -25, 2) == "ok"      # std=2 continuous = WiFi
 
     def test_ocusync_58_danger(self):
         assert classify(5800, -30, 6) == "danger"  # 5.8GHz bursty = OcuSync

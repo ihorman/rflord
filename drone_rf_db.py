@@ -36,41 +36,24 @@ DRONE_SIGNATURES = [
     (865, 885, 50, "FM", "SuperCam TLM", "SuperCam telemetry — 865-885 MHz"),
     (902, 928, 50, "FM", "SuperCam TLM", "SuperCam telemetry — 902-928 MHz"),
 
-    # === DJI Mavic Detection (2.4 GHz) ===
-    # DJI OcuSync/O3/O4 — detected by Tsukorok Vanilla on 2.4 GHz
-    (2400, 2500, 20000, "OFDM", "DJI Mavic", "DJI Mavic/OcuSync — 2.4 GHz, detectable 150-400m"),
-    # OcuSync 1.0 (Mavic Pro, Spark, Mavic Air)
-    (2400, 2483, 10000, "FHSS", "DJI OcuSync 1.0", "Mavic Pro/Spark/Mavic Air — encrypted FHSS, 2.4 GHz"),
-    (5725, 5850, 10000, "FHSS", "DJI OcuSync 1.0", "Mavic Pro/Spark/Mavic Air — encrypted FHSS, 5.8 GHz"),
+    # === DJI Drone Links (2.4 GHz) — Tsukorok-detected ===
+    # Cannot distinguish OcuSync version without protocol analysis.
+    # Use bandwidth to differentiate: 5MHz=RC, 10MHz=video, 20MHz=wide video, 40MHz=O4
+    (2400, 2500, 5000, "FHSS", "DJI RC", "DJI controller link — 2.4 GHz, 5 MHz FHSS"),
+    (2400, 2500, 10000, "FHSS", "DJI Video", "DJI drone video link — 2.4 GHz, 10 MHz (OcuSync)"),
+    (2400, 2500, 20000, "OFDM", "DJI Video", "DJI drone video link — 2.4 GHz, 20 MHz (O3/WiFi)"),
+    (2400, 2500, 40000, "OFDM", "DJI Video", "DJI drone video link — 2.4 GHz, 40 MHz (O4)"),
 
-    # OcuSync 2.0 (Mavic Air 2, Mavic Mini 2)
-    (2400, 2483, 10000, "FHSS", "DJI OcuSync 2.0", "Mavic Air 2/Mini 2 — encrypted FHSS, 2.4 GHz"),
-    (5725, 5850, 10000, "FHSS", "DJI OcuSync 2.0", "Mavic Air 2/Mini 2 — encrypted FHSS, 5.8 GHz"),
+    # === DJI Drone Links (5.8 GHz) ===
+    (5725, 5850, 5000, "FHSS", "DJI RC", "DJI controller link — 5.8 GHz, 5 MHz FHSS"),
+    (5725, 5850, 10000, "FHSS", "DJI Video", "DJI drone video link — 5.8 GHz, 10 MHz (OcuSync)"),
+    (5725, 5850, 20000, "OFDM", "DJI Video", "DJI drone video link — 5.8 GHz, 20 MHz (O3/Lightbridge)"),
+    (5725, 5850, 40000, "OFDM", "DJI Video", "DJI drone video link — 5.8 GHz, 40 MHz (O4)"),
 
-    # O3 (DJI Mini 3 Pro, Mavic 3)
-    (2400, 2483, 20000, "OFDM", "DJI O3", "Mini 3 Pro/Mavic 3 — encrypted OFDM, 2.4 GHz"),
-    (5725, 5850, 20000, "OFDM", "DJI O3", "Mini 3 Pro/Mavic 3 — encrypted OFDM, 5.8 GHz"),
-
-    # O4 (DJI Air 3, Mini 4 Pro, Mavic 4)
-    (2400, 2483, 40000, "OFDM", "DJI O4", "Air 3/Mini 4 Pro — encrypted OFDM, 2.4 GHz, 20km range"),
-    (5150, 5350, 40000, "OFDM", "DJI O4", "Air 3/Mini 4 Pro — encrypted OFDM, 5 GHz low"),
-    (5470, 5730, 40000, "OFDM", "DJI O4", "Air 3/Mini 4 Pro — encrypted OFDM, 5 GHz high"),
-    (5725, 5850, 40000, "OFDM", "DJI O4", "Air 3/Mini 4 Pro — encrypted OFDM, 5.8 GHz"),
-
-    # DJI Lightbridge (Phantom 3 Pro, Inspire 1)
-    (2400, 2483, 10000, "OFDM", "DJI Lightbridge", "Phantom 3 Pro/Inspire 1 — 2.4 GHz OFDM"),
-    (5725, 5850, 10000, "OFDM", "DJI Lightbridge", "Phantom 3 Pro/Inspire 1 — 5.8 GHz OFDM"),
-
-    # DJI WiFi-based (Ryze Tello, Mavic Mini 1)
-    (2400, 2483, 20000, "WiFi", "DJI WiFi", "Tello/Mavic Mini 1 — standard WiFi 2.4 GHz"),
-    (5150, 5350, 20000, "WiFi", "DJI WiFi", "Tello/Mavic Mini 1 — standard WiFi 5 GHz"),
-
-    # DJI FPV System (DJI FPV, Avata, O3 Air Unit)
-    (5725, 5850, 20000, "OFDM", "DJI FPV/O3 Air", "DJI FPV/Avata — encrypted digital FPV, 5.8 GHz, low latency"),
-
-    # DJI Controller RC (dedicated controller frequency)
-    (2400, 2483, 5000, "FHSS", "DJI RC", "DJI Smart Controller/RC Pro — control link, 2.4 GHz"),
-    (5725, 5850, 5000, "FHSS", "DJI RC", "DJI Smart Controller/RC Pro — control link, 5.8 GHz"),
+    # === DJI Drone Links (5 GHz WiFi bands) ===
+    (5150, 5350, 20000, "OFDM", "DJI Video", "DJI drone video link — 5 GHz low, 20 MHz"),
+    (5150, 5350, 40000, "OFDM", "DJI Video", "DJI drone video link — 5 GHz low, 40 MHz (O4)"),
+    (5470, 5730, 40000, "OFDM", "DJI Video", "DJI drone video link — 5 GHz high, 40 MHz (O4)"),
 
     # === Other Digital FPV Systems ===
     # HDZero (formerly Byte Frost)
@@ -136,23 +119,34 @@ DRONE_SIGNATURES = [
 def match_drone(freq_mhz, bandwidth_khz=None, modulation=None):
     """
     Match a frequency against known drone signatures.
-    Returns list of matching drone descriptions.
+    Uses frequency + bandwidth + modulation for matching.
+    Returns list of matching drone descriptions, sorted by score.
     """
     matches = []
     for sig in DRONE_SIGNATURES:
         freq_lo, freq_hi, bw_khz, mod, name, desc = sig
         if freq_lo <= freq_mhz <= freq_hi:
             score = 1.0
-            # Bonus for bandwidth match
-            if bandwidth_khz and bw_khz > 0:
+            # Bandwidth matching — REQUIRED for differentiation
+            if bandwidth_khz and bandwidth_khz > 0 and bw_khz > 0:
                 bw_ratio = min(bandwidth_khz, bw_khz) / max(bandwidth_khz, bw_khz)
-                score *= (0.5 + 0.5 * bw_ratio)
-            # Bonus for modulation match
+                score *= (0.3 + 0.7 * bw_ratio)  # Stronger weight
+            elif bandwidth_khz == 0:
+                # No bandwidth info — penalize wide signatures
+                score *= 0.5
+            # Modulation match bonus
             if modulation and modulation.upper() == mod.upper():
-                score *= 1.2
+                score *= 1.3
             matches.append((score, name, desc, mod, bw_khz))
     matches.sort(key=lambda x: -x[0])
-    return matches[:3]
+    # Deduplicate by name — keep best score
+    seen = set()
+    unique = []
+    for m in matches:
+        if m[1] not in seen:
+            seen.add(m[1])
+            unique.append(m)
+    return unique[:5]
 
 
 def get_drone_band_summary():

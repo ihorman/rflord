@@ -282,7 +282,9 @@ class SpyEventDB:
         self.db_path = db_path or os.path.expanduser(
             "~/.local/share/rflord/spy_events.db"
         )
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        d = os.path.dirname(self.db_path)
+        if d:
+            os.makedirs(d, exist_ok=True)
         self._conn = None
 
     @property

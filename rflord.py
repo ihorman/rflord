@@ -304,6 +304,7 @@ def parse_sweep(output):
                 'peak': max(db_vals),
                 'avg': sum(db_vals) / len(db_vals),
                 'spectral_std': math.sqrt(sum((x - sum(db_vals)/len(db_vals))**2 for x in db_vals) / len(db_vals)) if len(db_vals) > 1 else 0,
+                '_freq_range': (freq_low, freq_high),
             })
     
     # Compute temporal std from multiple sweeps at same frequency
@@ -312,14 +313,19 @@ def parse_sweep(output):
             peaks = [s['peak'] for s in sweeps]
             mean_peak = sum(peaks) / len(peaks)
             temporal_std = math.sqrt(sum((p - mean_peak)**2 for p in peaks) / len(peaks))
-            # Use max temporal_std and spectral_std as the combined metric
             best = max(sweeps, key=lambda x: x['peak'])
             best['std'] = max(temporal_std, best['spectral_std'])
             signals.append(best)
         else:
-            # Single sweep — use spectral std as fallback
             signals.append(sweeps[0])
             signals[-1]['std'] = sweeps[0]['spectral_std']
+    # Attach actual bandwidth from frequency range (kHz)
+    for s in signals:
+        freq_low, freq_high = s.get('_freq_range', (0, 0))
+        if freq_high > freq_low:
+            s['bw'] = (freq_high - freq_low) / 1e3  # Hz -> kHz
+        else:
+            s['bw'] = 0
     return signals
 
 def get_band(f):
@@ -340,7 +346,7 @@ def group_signals_by_type(signals, artemis_db=None):
     for s in signals:
         f = s['freq'] / 1e6
         # get_signal_type() now has correct priority: satellite > spy_db > rf_protos > heuristic
-        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
         if sig_type not in groups:
             groups[sig_type] = []
         groups[sig_type].append(s)
@@ -373,7 +379,7 @@ def group_suspicious(signals, artemis_db=None):
     groups = {}
     for s in signals:
         f = s['freq'] / 1e6
-        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
         # Use get_signal_type() as group key — it has correct priority chain
         if sig_type not in groups:
             groups[sig_type] = []
@@ -415,9 +421,8 @@ def group_suspicious(signals, artemis_db=None):
         if not remark:
             try:
                 from signatures_db import SignaturesDB
-                db = SignaturesDB()
-                sigs_db = db.identify_freq(f_strong, tolerance_mhz=1.0)
-                db.close()
+                with SignaturesDB() as db:
+                    sigs_db = db.identify_freq(f_strong, tolerance_mhz=1.0)
                 if sigs_db:
                     for s in sigs_db:
                         name = s.get('name', '')
@@ -436,13 +441,13 @@ def group_suspicious(signals, artemis_db=None):
             'std': strongest['std'],
             'dist': est_distance(f_near, nearest['peak']),
             'remark': remark,
-            'classify': classify(f_strong, strongest['peak'], strongest['std']),
+            'classify': classify(f_strong, strongest['peak'], strongest['std'], strongest.get('bw', 0)),
             '_strongest': strongest,  # Keep reference for detail popup
         })
     result.sort(key=lambda x: (-x['count'], -x['peak']))
     return result
 
-def classify(f, power, std):
+def classify(f, power, std, bw=0):
     """Classify signal as ok/sus/danger.
     
     Known legitimate signals are ALWAYS ok, regardless of distance.
@@ -451,11 +456,18 @@ def classify(f, power, std):
     
     # === DRONE SIGNALS — always danger (military threat) ===
     # Check signal type for drone signatures BEFORE WiFi/broadcast ok
-    sig_type = get_signal_type(f, 0, 0, std, None).lower()
+    sig_type = get_signal_type(f, bw, 0, std, None).lower()
     drone_keywords = ['orlan', 'zala', 'lancet', 'eleron', 'supercam', 
                       'dji', 'mavic', 'ocu', 'fpv', 'expresslrs', 'elrs']
     if any(kw in sig_type for kw in drone_keywords):
         return "danger"
+    # Very bursty signal (std > 6) in drone band = likely drone even without full ID
+    # (high temporal variance = FHSS hopping = drone control/video link)
+    if std and std >= 6:
+        if (865 <= f <= 885) or (902 <= f <= 928) or (970 <= f <= 1020):
+            return "danger"  # Tsukorok drone bands
+        if (2400 <= f <= 2500) or (5725 <= f <= 5850):
+            return "danger"  # DJI bands with high burstiness
     
     # === KNOWN LEGITIMATE SIGNALS — always ok ===
     if 2400 <= f <= 2500: return "ok"  # WiFi/BT
@@ -992,7 +1004,7 @@ def _show_signal_detail(stdscr, signal, artemis_db):
     """Show signal detail popup with full description text."""
     h, w = stdscr.getmaxyx()
     f = signal['freq'] / 1e6
-    sig_type = get_signal_type(f, 0, 0, signal['std'], artemis_db)
+    sig_type = get_signal_type(f, signal.get('bw', 0), 0, signal['std'], artemis_db)
     dist = est_distance(f, signal['peak'])
     cls = classify(f, signal['peak'], signal['std'])
     band = get_band(f)
@@ -1045,8 +1057,8 @@ def _show_signal_detail(stdscr, signal, artemis_db):
     # Signature DB lookup
     try:
         from signatures_db import SignaturesDB
-        sdb = SignaturesDB()
-        sig_matches = sdb.identify_freq(f, tolerance_mhz=0.5)
+        with SignaturesDB() as sdb:
+            sig_matches = sdb.identify_freq(f, tolerance_mhz=0.5)
         if sig_matches:
             lines.append(("label", f"  Signature DB: {len(sig_matches)} match(es)"))
             for sm in sig_matches[:3]:
@@ -1245,7 +1257,7 @@ def _show_history_view(stdscr, cursor_pos, signals, artemis_db, history):
         return
 
     # Find the signal at cursor position
-    sus_list = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+    sus_list = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
                       key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
     sus_grp = group_suspicious(sus_list, artemis_db)
 
@@ -1493,15 +1505,24 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     if spy_name:
         return f"{spy_icon} {spy_name}"
     
-    # === STEP 2: Drone RF DB FIRST for bursty signals (FHSS drones vs WiFi) ===
+    # === STEP 2: Drone RF DB for bursty signals (FHSS drones vs WiFi) ===
     # DJI OcuSync/ExpressLRS are bursty (high std), WiFi is continuous (low std)
+    # Requires BOTH burstiness AND signal analysis for identification
     if std and std > 4:
         try:
-            from drone_rf_db import match_drone
-            drone_matches = match_drone(freq_mhz, bw)
-            if drone_matches:
-                name = drone_matches[0][1]  # Best match name
-                return name[:20]
+            from drone_rf_db import match_drone, classify_as_drone
+            is_drone, confidence, drone_name, drone_desc = classify_as_drone(
+                freq_mhz, -30, std, bw)
+            if is_drone and confidence > 1.0:
+                # High confidence — use bandwidth to pick right signature
+                drone_matches = match_drone(freq_mhz, bw)
+                if drone_matches:
+                    name = drone_matches[0][1]
+                    # Add confidence qualifier if uncertain
+                    score = drone_matches[0][0]
+                    if score < 0.7:
+                        return f"~{name[:18]}"
+                    return name[:20]
         except: pass
     
     # === STEP 2b: Known frequency bands (continuous signals) ===
@@ -1929,11 +1950,11 @@ def draw_table(stdscr, signals, start_time, last_seen, alert_count, artemis_db, 
     # Full width, no caps
     W = w
     
-    suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+    suspicious = sorted([s for s in signals if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")],
                         key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
     sus_grouped = group_suspicious(suspicious, artemis_db)
     
-    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+    ok = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                 key=lambda x: x['peak'], reverse=True)
     ok_grouped = group_signals_by_type(ok, artemis_db)
     
@@ -2418,7 +2439,7 @@ def main_curses(stdscr, devices):
         # Blacklist filtering
         unique = filter_blacklisted(unique, blacklist)
 
-        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
+        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
 
         # Scan acceleration recording
@@ -2434,9 +2455,9 @@ def main_curses(stdscr, devices):
         # Web dashboard update — pass grouped data same as curses
         if web_dash:
             try:
-                sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+                sus_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")],
                                   key=lambda x: -severity_score(x["freq"]/1e6, x["peak"], x["std"], classify(x["freq"]/1e6, x["peak"], x["std"])))
-                ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
+                ok_list = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) not in ("sus", "danger") and s["peak"] > -65],
                                  key=lambda x: x["peak"], reverse=True)
                 sus_grouped = group_suspicious(sus_list, artemis_db)
                 ok_grouped = group_signals_by_type(ok_list, artemis_db)
@@ -2511,10 +2532,10 @@ def main_curses(stdscr, devices):
             if voice_msg and voice_enabled:
                 has_alarm = any(est_distance_m(s['freq']/1e6, s['peak']) < ALARM_THRESHOLD_M
                                for s in unique
-                               if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger'))
+                               if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger'))
                 has_warning = any(est_distance_m(s['freq']/1e6, s['peak']) >= ALARM_THRESHOLD_M
                                  for s in unique
-                                 if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger'))
+                                 if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger'))
                 if has_alarm and ALARM_ENABLED:
                     speak(voice_msg.replace("Alert.", "ALARM."))
                 elif has_warning and WARNING_ENABLED:
@@ -2536,7 +2557,7 @@ def main_curses(stdscr, devices):
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
-            if classify(f, s['peak'], s['std']) in ("sus", "danger"):
+            if classify(f, s['peak'], s['std'], s.get('bw', 0)) in ("sus", "danger"):
                 if round(f) not in known_freqs:
                     known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
@@ -2591,7 +2612,7 @@ def main_curses(stdscr, devices):
         
         all_camera_signals = [s for s in unique
                               if is_camera_signal(s['freq']/1e6, s['std'],
-                                                  get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))]
+                                                  get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db))]
         # Filter by cooldown
         now_ts = time.time()
         camera_signals = []
@@ -2608,7 +2629,7 @@ def main_curses(stdscr, devices):
             def _camera_worker(sig):
                 f = sig['freq'] / 1e6
                 spy_name, spy_icon, threat = identify_spy_device(f, sig['std'])
-                label = spy_name or get_signal_type(f, 0, 0, sig['std'], artemis_db)
+                label = spy_name or get_signal_type(f, sig.get('bw', 0), 0, sig['std'], artemis_db)
                 log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={sig['peak']:.1f} dBFS — capturing screenshot")
                 # Record spy event to persistent storage
                 if web_dash:
@@ -2636,7 +2657,7 @@ def main_curses(stdscr, devices):
         
         for s in unique:
             f = s['freq'] / 1e6
-            sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
             is_crit, reason = is_critical_signal(f, s['peak'], s['std'], sig_type)
             if is_crit:
                 freq_key = round(f)
@@ -2700,7 +2721,7 @@ def main_curses(stdscr, devices):
         if web_dash:
             for s in unique:
                 f = s['freq'] / 1e6
-                sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                 sig_lower = sig_type.lower()
                 # Only record events for actual drone/camera signals
                 is_drone_cam = False
@@ -2717,7 +2738,7 @@ def main_curses(stdscr, devices):
                     continue
                 spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
                 device_name = spy_name or sig_type
-                threat_level = threat if threat is not None else (0 if classify(f, s['peak'], s['std']) == 'danger' else 2)
+                threat_level = threat if threat is not None else (0 if classify(f, s['peak'], s['std'], s.get('bw', 0)) == 'danger' else 2)
                 freq_key = round(f)
                 last_evt = main_curses._last_spy_event.get(freq_key, 0)
                 if now_ts - last_evt < SPY_EVENT_COOLDOWN:
@@ -2734,7 +2755,7 @@ def main_curses(stdscr, devices):
         
         all_voice_signals = [s for s in unique
                              if is_voice_signal(s['freq']/1e6, s['std'],
-                                                get_signal_type(s['freq']/1e6, 0, 0, s['std'], artemis_db))
+                                                get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db))
                              and s['peak'] > VOICE_THRESHOLD]
         # Filter by cooldown
         voice_signals = []
@@ -2749,7 +2770,7 @@ def main_curses(stdscr, devices):
             def _voice_capture_worker(sigs):
                 for s in sigs:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                     log.info(f"VOICE SIGNAL: {sig_type} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing audio")
                     play_voice_sample(f)
             voice_thread = threading.Thread(target=_voice_capture_worker, args=(voice_signals,),
@@ -2779,7 +2800,7 @@ def main_curses(stdscr, devices):
                         log.info(f"Warning skip (silent): {f:.1f} MHz at {dist}")
                         continue
                     prefix = "ALARM!" if is_alarm else "WARNING!"
-                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
@@ -2805,7 +2826,7 @@ def main_curses(stdscr, devices):
                     vr = None
                     for s in above_threshold:
                         f = s['freq'] / 1e6
-                        sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                         # Skip camera signals — handled by camera worker
                         if is_camera_signal(f, s['std'], sig_type):
                             continue
@@ -2816,10 +2837,10 @@ def main_curses(stdscr, devices):
                     if not vr:
                         for s in above_threshold:
                             f = s['freq'] / 1e6
-                            sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                             if is_camera_signal(f, s['std'], sig_type):
                                 continue
-                            if sig_type == "Analog" and s['std'] < 4:
+                            if sig_type in ("CW/Carrier", "Narrowband", "NFM", "WFM", "AM") and s['std'] < 4:
                                 play_voice_sample(f)
                                 vr = "analog voice sample, saved to decoded folder"
                                 break
@@ -2846,7 +2867,7 @@ def main_curses(stdscr, devices):
         
         # Startup voice + periodic summary every 5 scans
         elif voice_enabled and (scan_num == 1 or scan_num % 5 == 0):
-            sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
+            sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')])
             if sus_count > 0:
                 speak(f"Status update. Scan {scan_num}. {len(unique)} signals tracked. {sus_count} suspicious.")
         
@@ -2866,7 +2887,7 @@ def main_curses(stdscr, devices):
                 voice_enabled = not voice_enabled
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'voice':
-                sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')])
+                sus_count = len([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')])
                 if voice_enabled:
                     speak(f"Scan complete. {len(unique)} signals found. {sus_count} suspicious.")
             elif key == 'interval_up':
@@ -2909,10 +2930,10 @@ def main_curses(stdscr, devices):
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'cursor_down':
                 # Get max count for active panel
-                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
-                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
                 ok_grp = group_signals_by_type(ok_list, artemis_db)
                 max_pos = len(sus_grp) - 1 if _cursor_panel == 'sus' else len(ok_grp) - 1
@@ -2930,10 +2951,10 @@ def main_curses(stdscr, devices):
                 draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'details':
                 # Get the selected signal from active panel
-                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
-                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
                 ok_grp = group_signals_by_type(ok_list, artemis_db)
                 active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
@@ -2944,10 +2965,10 @@ def main_curses(stdscr, devices):
                     draw_table(stdscr, unique, start_time, last_seen, alert_count, artemis_db, known_freqs, voice_enabled, history, web_url, assessment, perimeter)
             elif key == 'capture':
                 # Capture screenshot from selected signal (camera/FPV)
-                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) in ('sus', 'danger')],
+                sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
                                   key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
                 sus_grp = group_suspicious(sus_list, artemis_db)
-                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std']) not in ('sus', 'danger') and s['peak'] > -65],
+                ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
                 ok_grp = group_signals_by_type(ok_list, artemis_db)
                 active_grp = sus_grp if _cursor_panel == 'sus' else ok_grp
@@ -3170,13 +3191,13 @@ def main_ansi(devices=None):
             if key not in seen or s['peak'] > seen[key]['peak']:
                 seen[key] = s
         unique = list(seen.values())
-        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")])
+        sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
-        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) not in ("sus", "danger") and s["peak"] > -65],
+        ok = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) not in ("sus", "danger") and s["peak"] > -65],
                     key=lambda x: x["peak"], reverse=True)
         ok_grouped = group_signals_by_type(ok, artemis_db)
         
-        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"]) in ("sus", "danger")],
+        suspicious = sorted([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")],
                            key=lambda x: (-x['peak'],))
         sus_grouped = group_suspicious(suspicious, artemis_db)
 
@@ -3184,7 +3205,7 @@ def main_ansi(devices=None):
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
-            if classify(f, s['peak'], s['std']) in ("sus", "danger"):
+            if classify(f, s['peak'], s['std'], s.get('bw', 0)) in ("sus", "danger"):
                 if round(f) not in known_freqs:
                     known_freqs[round(f)] = time.time()
                     new_suspicious.append(s)
@@ -3267,7 +3288,7 @@ def main_ansi(devices=None):
                     if not is_alarm and not WARNING_ENABLED:
                         continue
                     prefix = "ALARM!" if is_alarm else "WARNING!"
-                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
@@ -3294,8 +3315,8 @@ def main_ansi(devices=None):
                         break
                 for s in above_threshold:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, 0, 0, s['std'], artemis_db)
-                    if sig_type == "Analog" and s['std'] < 4:
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                    if sig_type in ("CW/Carrier", "Narrowband", "NFM", "WFM", "AM") and s['std'] < 4:
                         play_voice_sample(f)
                         if not voice_result:
                             voice_result = "analog voice sample, saved to decoded folder"

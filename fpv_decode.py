@@ -276,6 +276,10 @@ def decode_frame(iq, sample_rate=10e6, standard='NTSC', pixels_per_line=720):
     n = len(seg_centered)
     fft_seg = np.fft.rfft(seg_centered, n=2*n)
     autocorr = np.fft.irfft(fft_seg * np.conj(fft_seg))[:n]
+    # Guard against division by zero / NaN
+    if autocorr[0] <= 0 or not np.isfinite(autocorr[0]):
+        print("  autocorr: invalid normalization — no video")
+        return None
     autocorr = autocorr / autocorr[0]  # Normalize
 
     # Search for peak near expected line period (±20%)

@@ -26,12 +26,17 @@ CROSSFIRE_RATE = 150
 
 def compute_spectrogram(iq_samples, sample_rate, fft_size=1024, overlap=0.5):
     """Compute spectrogram from IQ samples. Returns (times, freqs, power_db)."""
-    hop = int(fft_size * (1 - overlap))
-    n_frames = max(1, (len(iq_samples) - fft_size) // hop)
+    hop = max(1, int(fft_size * (1 - overlap)))
+    if len(iq_samples) < fft_size:
+        # Pad short inputs with zeros
+        iq_samples = np.pad(iq_samples, (0, fft_size - len(iq_samples)))
+    n_frames = max(1, (len(iq_samples) - fft_size) // hop + 1)
     window = np.hanning(fft_size)
     power = np.empty((n_frames, fft_size), dtype=np.float32)
     for i in range(n_frames):
         seg = iq_samples[i * hop: i * hop + fft_size]
+        if len(seg) < fft_size:
+            seg = np.pad(seg, (0, fft_size - len(seg)))
         spec = np.fft.fftshift(np.fft.fft(seg * window))
         power[i] = 10 * np.log10(np.abs(spec) ** 2 + 1e-20)
     freqs = np.fft.fftshift(np.fft.fftfreq(fft_size, 1 / sample_rate))
