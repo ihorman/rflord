@@ -298,10 +298,12 @@ class TestParseSweep:
     """Sweep output parsing."""
 
     def test_parse_valid_line(self):
+        # Peak BIN frequency (89 MHz), not row center (98 MHz) — old code
+        # could misplace a signal by up to half the row width.
         line = "2024-01-01, 12:00:00, 88000000, 108000000, 2000000, 100, -50.0, -55.0, -60.0"
         result = parse_sweep(line)
         assert len(result) == 1
-        assert result[0]['freq'] == 98000000
+        assert result[0]['freq'] == 89000000
 
     def test_parse_empty(self):
         assert parse_sweep("") == []

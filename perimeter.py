@@ -123,7 +123,7 @@ class PerimeterMode:
         for s in unique_signals:
             f = s['freq'] / 1e6
             freq_key = round(f)
-            cls = classify_fn(f, s['peak'], s['std'])
+            cls = classify_fn(f, s['peak'], s['std'], s.get('bw', 0))
             
             # Only jam suspicious/danger signals
             if cls not in ('sus', 'danger'):

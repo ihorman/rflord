@@ -109,10 +109,46 @@ class TestScanAccelerator:
 
     def test_skip_after_n_empty(self):
         from scan_accel import ScanAccelerator
-        accel = ScanAccelerator(skip_after_empty=3)
+        accel = ScanAccelerator(skip_after_empty=3, revival_s=999999)
         for _ in range(3):
-            accel.record_band_result(88, 250, 0)
-        assert accel.should_skip(88, 250) is True
+            accel.record_band_result(2400, 2500, 0)
+        # First check at threshold arms the skip timer (one final scan)
+        assert accel.should_skip(2400, 2500) is False
+        # Subsequent checks: skipped (until TTL revival)
+        assert accel.should_skip(2400, 2500) is True
+        assert accel.should_skip(2400, 2500) is True
+
+    def test_voice_band_never_skipped(self):
+        from scan_accel import ScanAccelerator
+        accel = ScanAccelerator(skip_after_empty=1, revival_s=999999)
+        for _ in range(20):
+            accel.record_band_result(446, 447, 0)
+            assert accel.should_skip(446, 447) is False  # PMR446 never skipped
+
+    def test_voice_band_overlap_not_containment(self):
+        """A wide configured band OVERLAPPING a voice range must be protected
+        (old containment test failed for real config bands like 430-470)."""
+        from scan_accel import ScanAccelerator
+        accel = ScanAccelerator(skip_after_empty=1, revival_s=999999)
+        for _ in range(20):
+            accel.record_band_result(430, 470, 0)
+        assert accel.should_skip(430, 470) is False
+
+    def test_failed_sweep_does_not_retire(self):
+        from scan_accel import ScanAccelerator
+        accel = ScanAccelerator(skip_after_empty=2, revival_s=999999)
+        for _ in range(10):
+            accel.record_band_result(2400, 2500, 0, sweep_ok=False)  # USB glitch
+        assert accel.should_skip(2400, 2500) is False  # not retired
+
+    def test_skipped_band_revives(self):
+        import time as _t
+        from scan_accel import ScanAccelerator
+        accel = ScanAccelerator(skip_after_empty=1, revival_s=0)
+        accel.record_band_result(2400, 2500, 0)
+        accel.should_skip(2400, 2500)  # arm
+        # revival_s=0 -> every check is a revival probe
+        assert accel.should_skip(2400, 2500) is False
 
     def test_reset_on_signal(self):
         from scan_accel import ScanAccelerator
@@ -124,13 +160,15 @@ class TestScanAccelerator:
 
     def test_get_active_bands(self):
         from scan_accel import ScanAccelerator
-        accel = ScanAccelerator(skip_after_empty=2)
-        bands = [(88, 250, 2000000, 3), (250, 600, 2000000, 3), (600, 1000, 2000000, 3)]
+        accel = ScanAccelerator(skip_after_empty=2, revival_s=999999)
+        bands = [(2400, 2500, 1000000, 3), (5150, 5850, 500000, 3), (1710, 1785, 1000000, 3)]
         for _ in range(2):
-            accel.record_band_result(88, 250, 0)
+            accel.record_band_result(2400, 2500, 0)
+        accel.should_skip(2400, 2500)  # arm skip timer
+        accel.should_skip(2400, 2500)  # now skipped
         active = accel.get_active_bands(bands)
         assert len(active) == 2
-        assert active[0][0] == 250
+        assert active[0][0] == 5150
 
     def test_minimum_two_bands(self):
         from scan_accel import ScanAccelerator
@@ -143,11 +181,12 @@ class TestScanAccelerator:
 
     def test_reset(self):
         from scan_accel import ScanAccelerator
-        accel = ScanAccelerator(skip_after_empty=1)
-        accel.record_band_result(88, 250, 0)
-        assert accel.should_skip(88, 250) is True
+        accel = ScanAccelerator(skip_after_empty=1, revival_s=999999)
+        accel.record_band_result(2400, 2500, 0)
+        accel.should_skip(2400, 2500)  # arm
+        assert accel.should_skip(2400, 2500) is True
         accel.reset()
-        assert accel.should_skip(88, 250) is False
+        assert accel.should_skip(2400, 2500) is False
 
 
 class TestExport:

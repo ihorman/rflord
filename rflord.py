@@ -276,40 +276,82 @@ def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
     return run_cmd(cmd, timeout=60)
 
 def parse_sweep(output):
+    """Parse hackrf_sweep / rtl_power CSV output into signal dicts.
+
+    Format (both tools): 'date, time, hz_low, hz_high, hz_bin_width, num_samples, dB...'
+
+    Each row covers a wide window (hackrf: 5 MHz) with per-bin dB values.
+    Reporting the row center would put a 2400.1 MHz emitter at 2402.5 MHz
+    (up to +/-2.5 MHz error). We locate the PEAK BIN and emit one signal per
+    contiguous cluster above the noise floor, with real frequency and bandwidth.
+    """
     signals = []
-    # Group by frequency range to compute temporal std across sweeps
     freq_groups = {}
+    parse_errors = 0
     for line in output.strip().split('\n'):
+        line = line.strip()
         if not line or not line[0].isdigit():
             continue
-        parts = line.split(', ')
+        # Defensive split: tools may emit ', ' or ',' or CRLF
+        parts = [p.strip() for p in line.split(',')]
         if len(parts) < 7:
+            parse_errors += 1
             continue
         try:
             freq_low = int(parts[2])
             freq_high = int(parts[3])
-        except:
+            bin_width = float(parts[4])
+        except (ValueError, IndexError):
+            parse_errors += 1
             continue
         db_vals = []
         for p in parts[6:]:
             try:
-                db_vals.append(float(p.strip()))
-            except:
+                v = float(p)
+                if math.isfinite(v):
+                    db_vals.append(v)
+            except ValueError:
                 pass
-        if db_vals:
-            center = (freq_low + freq_high) / 2
-            key = f"{freq_low}_{freq_high}"
-            if key not in freq_groups:
-                freq_groups[key] = []
-            freq_groups[key].append({
-                'freq': center,
-                'peak': max(db_vals),
-                'avg': sum(db_vals) / len(db_vals),
-                'spectral_std': math.sqrt(sum((x - sum(db_vals)/len(db_vals))**2 for x in db_vals) / len(db_vals)) if len(db_vals) > 1 else 0,
-                '_freq_range': (freq_low, freq_high),
-            })
-    
-    # Compute temporal std from multiple sweeps at same frequency
+        if not db_vals:
+            continue
+        if bin_width <= 0:
+            bin_width = (freq_high - freq_low) / len(db_vals)
+
+        # Find contiguous clusters of bins above (peak - 25 dB): one per signal
+        peak_db = max(db_vals)
+        thresh = peak_db - 25.0
+        i = 0
+        n = len(db_vals)
+        while i < n:
+            if db_vals[i] >= thresh:
+                j = i
+                while j + 1 < n and db_vals[j + 1] >= thresh:
+                    j += 1
+                cluster = db_vals[i:j + 1]
+                peak_k = i + cluster.index(max(cluster))
+                # Frequency of the peak BIN (center of that bin), not row center
+                freq = freq_low + peak_k * bin_width + bin_width / 2.0
+                cluster_bw = (j - i + 1) * bin_width
+                key = round(freq / 100000.0)  # cluster by 100 kHz
+                if key not in freq_groups:
+                    freq_groups[key] = []
+                freq_groups[key].append({
+                    'freq': freq,
+                    'peak': max(cluster),
+                    'avg': sum(cluster) / len(cluster),
+                    'spectral_std': math.sqrt(sum((x - sum(cluster)/len(cluster))**2 for x in cluster) / len(cluster)) if len(cluster) > 1 else 0,
+                    '_bw_hz': cluster_bw,
+                    '_freq_range': (freq_low, freq_high),
+                })
+                i = j + 1
+            else:
+                i += 1
+
+    if parse_errors and output.strip():
+        # Non-empty output that produced zero parseable rows = format drift
+        log.warning(f"parse_sweep: {parse_errors} unparseable rows (output format drift?)")
+
+    # Compute temporal std from multiple sweeps at same signal
     for key, sweeps in freq_groups.items():
         if len(sweeps) >= 2:
             peaks = [s['peak'] for s in sweeps]
@@ -321,13 +363,10 @@ def parse_sweep(output):
         else:
             signals.append(sweeps[0])
             signals[-1]['std'] = sweeps[0]['spectral_std']
-    # Attach actual bandwidth from frequency range (kHz)
+    # Bandwidth from actual cluster width (kHz)
     for s in signals:
-        freq_low, freq_high = s.get('_freq_range', (0, 0))
-        if freq_high > freq_low:
-            s['bw'] = (freq_high - freq_low) / 1e3  # Hz -> kHz
-        else:
-            s['bw'] = 0
+        s['bw'] = s.pop('_bw_hz', 0) / 1e3  # Hz -> kHz
+        s.pop('_freq_range', None)
     return signals
 
 def get_band(f):
@@ -361,6 +400,8 @@ def group_signals_by_type(signals, artemis_db=None):
         nearest = min(sigs, key=lambda x: est_distance_m(x['freq']/1e6, x['peak']))
         f_strong = strongest['freq'] / 1e6
         f_near = nearest['freq'] / 1e6
+        # remark from the SAME source as the type (never a cross-DB mix)
+        _remark = describe_by_type(f_strong, key, strongest['std'], strongest['peak'], artemis_db)
         result.append({
             'type': key,
             'count': len(sigs),
@@ -370,6 +411,7 @@ def group_signals_by_type(signals, artemis_db=None):
             'dist': est_distance(f_near, nearest['peak']),
             'band': get_band(f_strong),
             'nearest_freq': f_near,
+            'remark': _remark,
             '_strongest': strongest,  # Keep reference for detail popup
         })
     # Sort by count descending, then by peak
@@ -417,6 +459,18 @@ def describe_by_type(f, sig_type, std, power=None, artemis_db=None):
         return "Aviation voice"
     if 'ham' in sl:
         return "Amateur radio"
+    if 'mil' in sl or 'military' in sl:
+        return "Possible military link"
+    if 'ism433' in sl or 'ism 433' in sl:
+        return "ISM 433 MHz device telemetry"
+    if 'ism' in sl or '915' in sl or '868' in sl:
+        return "ISM band device link"
+    if 'cw' in sl or 'narrowband' in sl:
+        return "Narrowband carrier"
+    if 'wideband' in sl:
+        return "Wideband signal"
+    if 'dvb' in sl or 'broadcast' in sl:
+        return "Broadcast transmitter"
     return ''  # empty -> caller falls back to other sources
 
 def group_suspicious(signals, artemis_db=None):
@@ -591,78 +645,86 @@ def is_satellite_signal(freq_mhz):
     if 1087 <= freq_mhz <= 1095: return True
     return False
 
-def est_distance(freq_mhz, power_dbfs):
-    """Estimate distance from signal power using FSPL model.
+# ---------------------------------------------------------------------------
+# ONE shared transmit-power table. est_distance (spoken text) and est_distance_m
+# (alarm routing) previously had DUPLICATE tables with different ordering —
+# PMR446 resolved to 37 dBm in one and 30 dBm in the other, so the spoken
+# distance could contradict the alarm decision. Narrow bands must come FIRST.
+# ---------------------------------------------------------------------------
+_TX_POWER_TABLE = [
+    # (f_lo, f_hi, tx_dBm, label) — NARROW/SPECIFIC first
+    (169, 170, 27, "SRD/LoRa"),
+    (315, 320, 10, "key fobs"),
+    (380, 400, 37, "TETRAPOL/DMR"),
+    (406, 410, 37, "beacons"),
+    (433, 435, 10, "ISM 433"),
+    (446, 447, 27, "PMR446"),
+    (462, 468, 27, "FRS/GMRS"),
+    (500, 530, 30, "AVM/vehicle"),
+    (868, 870, 27, "EU LoRa/ISM"),
+    (900, 930, 30, "ISM 900"),
+    (1080, 1095, 27, "ADS-B"),
+    (1080, 1300, 14, "spy camera 1.2 GHz"),
+    (1227, 1228, 10, "GPS L2"),
+    (1300, 1400, 50, "L-band radar"),
+    (1574, 1577, 10, "GPS L1"),
+    (1880, 1900, 23, "DECT"),
+    (5725, 5875, 14, "FPV/spy camera"),
+    # WIDE bands
+    (30, 88, 40, "military VHF"),
+    (88, 108, 60, "FM broadcast"),
+    (108, 137, 37, "air band"),
+    (144, 148, 37, "2m ham"),
+    (156, 162, 25, "marine VHF"),
+    (162, 174, 37, "VHF public safety"),
+    (174, 230, 50, "DVB-T/DAB"),
+    (225, 400, 43, "military UHF"),
+    (406, 430, 37, "TETRAPOL UHF"),
+    (430, 470, 30, "PMR/UHF handheld"),
+    (470, 790, 57, "DVB-T2 tower"),
+    (791, 862, 43, "LTE800"),
+    (800, 890, 43, "GSM800/LTE"),
+    (935, 960, 43, "GSM900 DL"),
+    (1805, 1880, 43, "GSM1800"),
+    (1920, 1980, 43, "3G UMTS"),
+    (2110, 2170, 43, "3G/LTE"),
+    (2400, 2500, 20, "WiFi/BT 2.4"),
+    (2620, 2690, 43, "LTE2600"),
+    (2700, 3500, 40, "S-band radar"),
+    (5150, 5900, 23, "WiFi 5 GHz"),
+]
 
-    HackRF with -l 32 -g 40 -a 1 calibration:
-    Noise floor ≈ -70 dBFS ≈ -100 dBm
-    Full scale ≈ 0 dBFS ≈ -30 dBm
-    So: rx_dbm ≈ power_dbfs - 30
-    """
-    # Satellite signals — distance is meaningless (20,200 km orbit)
-    if is_satellite_signal(freq_mhz):
-        return "Satellite"
-    # HackRF calibration: -l 32 -g 40 -a 1
-    # Noise floor ≈ -70 dBFS ≈ -100 dBm, full scale ≈ 0 dBFS ≈ -30 dBm
-    # So rx_dbm ≈ rx_power_dbfs - 30
-    SDR_GAIN = 30
-    rx_dbm = power_dbfs - SDR_GAIN
 
-    # Estimated transmit power (dBm) — NARROW bands FIRST (order matters!)
-    # --- Narrow specific bands ---
-    if 169 <= freq_mhz <= 170: tx = 27    # SRD/LoRa (500mW) BEFORE 162-174
-    elif 315 <= freq_mhz <= 320: tx = 10   # Key fobs / garage remotes (10mW)
-    elif 380 <= freq_mhz <= 400: tx = 37   # TETRAPOL / DMR public safety (5W) BEFORE 225-400
-    elif 406 <= freq_mhz <= 430: tx = 37   # TETRAPOL / DMR public safety (5W)
-    elif 420 <= freq_mhz <= 430: tx = 20   # ISM/surveillance (100mW) — unreachable, in 406-430
-    elif 433 <= freq_mhz <= 435: tx = 10   # ISM short-range (10mW) BEFORE 430-470
-    elif 440 <= freq_mhz <= 470: tx = 37   # UHF public safety (5W) BEFORE 430-470
-    elif 446 <= freq_mhz <= 447: tx = 27   # PMR446 (500mW) BEFORE 430-470
-    elif 462 <= freq_mhz <= 468: tx = 27   # FRS/GMRS (500mW) BEFORE 430-470
-    elif 500 <= freq_mhz <= 530: tx = 30   # AVM / vehicle monitoring (1W) BEFORE 470-860
-    elif 5725 <= freq_mhz <= 5875: tx = 14 # FPV / spy camera (25mW) BEFORE 5250-5850
-    elif 868 <= freq_mhz <= 870: tx = 27   # EU LoRa/ISM (500mW)
-    elif 900 <= freq_mhz <= 930: tx = 30   # ISM / utility meters (1W)
-    elif 1080 <= freq_mhz <= 1095: tx = 27 # ADS-B transponder (500mW) BEFORE 1080-1300
-    elif 1087 <= freq_mhz <= 1095: tx = 27 # ADS-B (unreachable, merged above)
-    elif 1227 <= freq_mhz <= 1228: tx = 10 # GPS L2
-    elif 1080 <= freq_mhz <= 1300: tx = 14 # Spy camera 1.2 GHz (25mW)
-    elif 1300 <= freq_mhz <= 1400: tx = 50 # L-band radar (100W)
-    elif 1574 <= freq_mhz <= 1577: tx = 10 # GPS L1
-    elif 1880 <= freq_mhz <= 1900: tx = 23 # DECT (250mW)
-    # --- Wide bands ---
-    elif 30 <= freq_mhz <= 88:   tx = 40   # Military VHF (10W handheld, 50W vehicle)
-    elif 88 <= freq_mhz <= 108:  tx = 60   # FM broadcast tower (1 kW)
-    elif 108 <= freq_mhz <= 137: tx = 37   # Air band (aircraft 5W)
-    elif 144 <= freq_mhz <= 148: tx = 37   # 2m ham (5W)
-    elif 156 <= freq_mhz <= 162: tx = 25   # Marine VHF (25W but typical 5W)
-    elif 162 <= freq_mhz <= 174: tx = 37   # VHF public safety / marine (5W)
-    elif 174 <= freq_mhz <= 230: tx = 50   # DVB-T / DAB tower (100W)
-    elif 225 <= freq_mhz <= 400: tx = 43   # Military UHF airband (20W aircraft)
-    elif 430 <= freq_mhz <= 470: tx = 30   # PMR / UHF handheld (1W)
-    elif 470 <= freq_mhz <= 790: tx = 57   # DVB-T2 tower (500W) — Ukraine
-    elif 470 <= freq_mhz <= 860: tx = 57   # ISDB-T / analog TV tower (500W)
-    elif 791 <= freq_mhz <= 862: tx = 43   # LTE800 base station (20W)
-    elif 800 <= freq_mhz <= 890: tx = 43   # GSM800/LTE base station (20W)
-    elif 935 <= freq_mhz <= 960: tx = 43   # GSM900 base station downlink (20W)
-    elif 1805 <= freq_mhz <= 1880: tx = 43 # GSM1800 base station (20W)
-    elif 1920 <= freq_mhz <= 1980: tx = 43 # 3G UMTS uplink
-    elif 2110 <= freq_mhz <= 2170: tx = 43 # 3G/LTE base station (20W)
-    elif 2400 <= freq_mhz <= 2500: tx = 20 # WiFi / Bluetooth (100mW)
-    elif 2620 <= freq_mhz <= 2690: tx = 43 # LTE2600 base station (20W)
-    elif 2700 <= freq_mhz <= 3500: tx = 40 # S-band radar (10W)
-    elif 5150 <= freq_mhz <= 5900: tx = 23 # WiFi 5 GHz (200mW)
-    elif 5250 <= freq_mhz <= 5850: tx = 40 # C-band radar (10W)
-    else: tx = 27                           # Default: ~500 mW
+def _tx_power_dbm(freq_mhz):
+    """Estimated transmit power in dBm — one table for ALL distance estimates."""
+    for f_lo, f_hi, tx, _label in _TX_POWER_TABLE:
+        if f_lo <= freq_mhz <= f_hi:
+            return tx
+    return 27  # default ~500 mW
 
-    # Free-space path loss from link budget
-    fspl = tx - rx_dbm  # dB
+
+def _fspl_meters(freq_mhz, power_dbfs, sdr_gain=30):
+    """Distance in meters via free-space path loss. Shared math — both
+    est_distance and est_distance_m MUST agree (spoken text vs alarm routing)."""
+    rx_dbm = power_dbfs - sdr_gain
+    tx = _tx_power_dbm(freq_mhz)
+    fspl = tx - rx_dbm
     fspl = max(20, min(160, fspl))
-    # FSPL(dB) = 20*log10(d_km) + 20*log10(f_MHz) + 32.44
-    # Solve for d_km:
     d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
     d_km = max(0.001, min(500, d_km))
-    meters = d_km * 1000
+    return d_km * 1000
+
+
+def est_distance(freq_mhz, power_dbfs):
+    """Estimate distance from signal power using FSPL model (spoken string).
+
+    HackRF with -l 32 -g 40 -a 1 calibration:
+    Noise floor ≈ -70 dBFS ≈ -100 dBm, full scale ≈ 0 dBFS ≈ -30 dBm
+    So: rx_dbm ≈ power_dbfs - 30
+    """
+    if is_satellite_signal(freq_mhz):
+        return "Satellite"
+    meters = _fspl_meters(freq_mhz, power_dbfs)
     if meters < 1000:
         return f"{meters:.0f}m"
     elif meters < 10000:
@@ -670,57 +732,13 @@ def est_distance(freq_mhz, power_dbfs):
     else:
         return f"{meters/1000:.0f}km"
 
+
 def est_distance_m(freq_mhz, power_dbfs):
-    """Return distance in meters as a number (for sorting)."""
+    """Return distance in meters as a number (for sorting and alarm routing).
+    MUST agree with est_distance — same table, same math."""
     if is_satellite_signal(freq_mhz):
         return 999999  # Satellite — distance meaningless, sort to end
-    SDR_GAIN = 30
-    rx_dbm = power_dbfs - SDR_GAIN
-    if 88 <= freq_mhz <= 108:    tx = 60
-    elif 174 <= freq_mhz <= 230: tx = 50
-    elif 470 <= freq_mhz <= 790: tx = 57
-    elif 470 <= freq_mhz <= 860: tx = 57
-    elif 800 <= freq_mhz <= 890: tx = 43
-    elif 935 <= freq_mhz <= 960: tx = 43
-    elif 1805 <= freq_mhz <= 1880: tx = 43
-    elif 1920 <= freq_mhz <= 1980: tx = 43
-    elif 2110 <= freq_mhz <= 2170: tx = 43
-    elif 2620 <= freq_mhz <= 2690: tx = 43
-    elif 791 <= freq_mhz <= 862: tx = 43
-    elif 108 <= freq_mhz <= 137: tx = 37
-    elif 144 <= freq_mhz <= 148: tx = 37
-    elif 430 <= freq_mhz <= 470: tx = 30
-    elif 2400 <= freq_mhz <= 2500: tx = 20
-    elif 5150 <= freq_mhz <= 5900: tx = 23
-    elif 30 <= freq_mhz <= 88:   tx = 40
-    elif 225 <= freq_mhz <= 400: tx = 43
-    elif 1300 <= freq_mhz <= 1400: tx = 50
-    elif 2700 <= freq_mhz <= 3500: tx = 40
-    elif 5250 <= freq_mhz <= 5850: tx = 40
-    elif 380 <= freq_mhz <= 400: tx = 37
-    elif 406 <= freq_mhz <= 430: tx = 37
-    elif 440 <= freq_mhz <= 470: tx = 37
-    elif 162 <= freq_mhz <= 174: tx = 37
-    elif 156 <= freq_mhz <= 162: tx = 25
-    elif 1087 <= freq_mhz <= 1095: tx = 27
-    elif 1574 <= freq_mhz <= 1577: tx = 10
-    elif 1227 <= freq_mhz <= 1228: tx = 10
-    elif 169 <= freq_mhz <= 170: tx = 27
-    elif 868 <= freq_mhz <= 870: tx = 27
-    elif 500 <= freq_mhz <= 530: tx = 30
-    elif 900 <= freq_mhz <= 930: tx = 30
-    elif 1880 <= freq_mhz <= 1900: tx = 23
-    elif 5725 <= freq_mhz <= 5875: tx = 14
-    elif 1080 <= freq_mhz <= 1300: tx = 14
-    elif 420 <= freq_mhz <= 430:  tx = 20
-    elif 315 <= freq_mhz <= 320:  tx = 10
-    elif 433 <= freq_mhz <= 435:  tx = 10
-    else: tx = 27
-    fspl = tx - rx_dbm
-    fspl = max(20, min(160, fspl))
-    d_km = 10 ** ((fspl - 32.44 - 20 * math.log10(max(freq_mhz, 1))) / 20)
-    d_km = max(0.001, min(500, d_km))
-    return d_km * 1000
+    return _fspl_meters(freq_mhz, power_dbfs)
 
 
 def speak_distance(dist_str):
@@ -786,46 +804,60 @@ def in_legitimate_band(freq_mhz):
     return False
 
 _speaking = False
+from collections import deque as _deque
+_speak_queue = _deque()
 
 def speak(text):
-    """Speak text via edge-tts with HAL 9000 effect. Non-blocking — runs in daemon thread."""
+    """Speak text via edge-tts with HAL 9000 effect. Non-blocking.
+
+    Queue-based: alerts arriving while another utterance plays are QUEUED,
+    not dropped (a dropped ALARM for an intermittent signal is lost forever).
+    """
+    global _speak_queue
+    _speak_queue.append(text)
+    while len(_speak_queue) > 10:
+        _speak_queue.popleft()  # cap queue, drop oldest
+    log.info(f"SPEAK queued: {text[:100]}")
+    _start_speak_worker()
+
+def _start_speak_worker():
     global _speaking
     if _speaking:
-        log.info(f"SPEAK SKIP (already speaking): {text[:60]}")
         return
     _speaking = True  # Set BEFORE thread start to prevent TOCTOU race
-    log.info(f"SPEAK: {text[:100]}")
     def _speak_thread():
-        global _speaking
-        try:
-            raw = tempfile.NamedTemporaryFile(suffix='.mp3', prefix='tts_', delete=False).name
-            out = tempfile.NamedTemporaryFile(suffix='.wav', prefix='hal_', delete=False).name
-            # Use edge-tts as module (more reliable than CLI)
-            import edge_tts
-            import asyncio
-            communicate = edge_tts.Communicate(text, TTS_VOICE, rate="-15%")
-            asyncio.run(communicate.save(raw))
-            if os.path.exists(raw):
-                r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
-                os.unlink(raw)
-                if r2.returncode != 0:
-                    log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
-                    return
-                if os.path.exists(out):
-                    # Cross-platform audio playback
-                    if IS_MACOS:
-                        r3 = subprocess.run(["afplay", out], capture_output=True, timeout=120)
-                    else:
-                        r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
-                    os.unlink(out)
-                    if r3.returncode != 0:
-                        log.warning(f"TTS playback failed: rc={r3.returncode}")
-            else:
-                log.warning(f"TTS raw file not created: {raw}")
-        except Exception as e:
-            log.warning(f"TTS exception: {e}")
-        finally:
-            _speaking = False
+        global _speaking, _speak_queue
+        while _speak_queue:
+            text = _speak_queue.popleft()
+            log.info(f"SPEAK: {text[:100]}")
+            try:
+                raw = tempfile.NamedTemporaryFile(suffix='.mp3', prefix='tts_', delete=False).name
+                out = tempfile.NamedTemporaryFile(suffix='.wav', prefix='hal_', delete=False).name
+                # Use edge-tts as module (more reliable than CLI)
+                import edge_tts
+                import asyncio
+                communicate = edge_tts.Communicate(text, TTS_VOICE, rate="-15%")
+                asyncio.run(communicate.save(raw))
+                if os.path.exists(raw):
+                    r2 = subprocess.run([HAL_EFFECT, raw, out], capture_output=True, timeout=30)
+                    os.unlink(raw)
+                    if r2.returncode != 0:
+                        log.warning(f"TTS hal-effect failed: rc={r2.returncode} stderr={r2.stderr[:200]}")
+                        continue
+                    if os.path.exists(out):
+                        # Cross-platform audio playback
+                        if IS_MACOS:
+                            r3 = subprocess.run(["afplay", out], capture_output=True, timeout=120)
+                        else:
+                            r3 = subprocess.run(["paplay", out], capture_output=True, timeout=120)
+                        os.unlink(out)
+                        if r3.returncode != 0:
+                            log.warning(f"TTS playback failed: rc={r3.returncode}")
+                else:
+                    log.warning(f"TTS raw file not created: {raw}")
+            except Exception as e:
+                log.warning(f"TTS exception: {e}")
+        _speaking = False
     t = threading.Thread(target=_speak_thread, daemon=True, name="rflord-speak")
     t.start()
 
@@ -986,9 +1018,9 @@ def _show_signal_detail(stdscr, signal, artemis_db):
     """Show signal detail popup with full description text."""
     h, w = stdscr.getmaxyx()
     f = signal['freq'] / 1e6
-    sig_type = get_signal_type(f, signal.get('bw', 0), 0, signal['std'], artemis_db)
+    sig_type = get_signal_type(f, signal.get('bw', 0), 0, signal['std'], artemis_db, signal['peak'])
     dist = est_distance(f, signal['peak'])
-    cls = classify(f, signal['peak'], signal['std'])
+    cls = classify(f, signal['peak'], signal['std'], signal.get('bw', 0))
     band = get_band(f)
     spy_name, spy_icon, threat = identify_spy_device(f, signal['std'])
     
@@ -1240,7 +1272,7 @@ def _show_history_view(stdscr, cursor_pos, signals, artemis_db, history):
 
     # Find the signal at cursor position
     sus_list = sorted([s for s in signals if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
-                      key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                      key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'], x.get('bw', 0))))
     sus_grp = group_suspicious(sus_list, artemis_db)
 
     if not (0 <= cursor_pos < len(sus_grp)):
@@ -1266,7 +1298,9 @@ def _show_history_view(stdscr, cursor_pos, signals, artemis_db, history):
         return
 
     g = sus_grp[cursor_pos]
-    freq_mhz = g['freq'] / 1e6
+    # g['freq'] is already MHz (group_suspicious stores f_strong in MHz).
+    # Dividing again showed 'History for 0.0 MHz' and no rows.
+    freq_mhz = g['freq'] / 1e6 if g['freq'] > 10000 else g['freq']
     history_rows = history.get_history(freq_mhz, days=7)
 
     lines = [f"  History for {freq_mhz:.1f} MHz (last 7 days)", ""]
@@ -2240,6 +2274,7 @@ def main_curses(stdscr, devices):
     # Signal cache: keeps signals visible across scans (TTL-based, like a real receiver)
     _signal_cache = {}   # key=round(freq) -> {'sig': sig_dict, 'ts': time.time()}
     SIGNAL_CACHE_TTL = 300  # seconds to keep a signal in the table after last seen
+    ALERT_REAPPEAR_S = 600  # re-alert when a suspicious freq returns after this absence
     voice_enabled = True
     start_time = time.time()
 
@@ -2280,21 +2315,58 @@ def main_curses(stdscr, devices):
 
     # Determine scan assignment: which device scans which bands
     def _assign_bands(bands, devices):
-        """Split bands between devices. HackRF takes high bands, RTL-SDR takes low bands."""
+        """Split bands between devices. HackRF takes high bands, RTL-SDR takes low bands.
+
+        Bug history: bands straddling 1000 MHz satisfied NEITHER filter and were
+        silently dropped; the positional fallback gave RTL-SDR bands above its
+        1766 MHz tuning cap, which then failed -> counted empty -> retired.
+        """
+        RTL_MAX = 1700  # R820T tops out at ~1766 MHz; stay under
+        SPLIT = 1000
         if len(devices) < 2:
-            return {devices[0]: bands}
-        # RTL-SDR: bands below 1000 MHz (good sensitivity at VHF/UHF)
-        # HackRF: bands above 1000 MHz (better at microwave)
-        rtlsdr_bands = [(f_lo, f_hi, bw, n) for f_lo, f_hi, bw, n in bands if f_hi <= 1000]
-        hackrf_bands = [(f_lo, f_hi, bw, n) for f_lo, f_hi, bw, n in bands if f_lo >= 1000]
-        # If no clean split, give HackRF everything and RTL-SDR the low half
-        if not hackrf_bands:
-            mid = len(bands) // 2
-            rtlsdr_bands = bands[:mid]
-            hackrf_bands = bands[mid:]
-        if not rtlsdr_bands:
-            rtlsdr_bands = hackrf_bands[:len(hackrf_bands)//2]
-            hackrf_bands = hackrf_bands[len(hackrf_bands)//2:]
+            assignment = {devices[0]: bands}
+            if devices[0] == "rtlsdr":
+                # RTL-SDR alone cannot tune above RTL_MAX — clamp with a warning
+                clamped = []
+                for f_lo, f_hi, bw, n in bands:
+                    if f_lo >= RTL_MAX:
+                        log.warning(f"SCAN COVERAGE: band {f_lo}-{f_hi} MHz beyond RTL-SDR cap, NOT SCANNED")
+                    else:
+                        clamped.append((f_lo, min(f_hi, RTL_MAX), bw, n))
+                assignment[devices[0]] = clamped
+            return assignment
+
+        rtlsdr_bands, hackrf_bands = [], []
+        for f_lo, f_hi, bw, n in bands:
+            if f_hi <= SPLIT:
+                rtlsdr_bands.append((f_lo, f_hi, bw, n))
+            elif f_lo >= SPLIT:
+                hackrf_bands.append((f_lo, f_hi, bw, n))
+            else:
+                # Band STRADDLES the boundary — split it, don't drop it
+                rtlsdr_bands.append((f_lo, SPLIT, bw, n))
+                hackrf_bands.append((SPLIT, f_hi, bw, n))
+                log.info(f"SCAN SPLIT: band {f_lo}-{f_hi} MHz split at {SPLIT} MHz")
+        # RTL-SDR cannot tune above its cap — move those bands to HackRF
+        kept_rtl = []
+        for b in rtlsdr_bands:
+            if b[1] > RTL_MAX:
+                kept, over = (b[0], RTL_MAX, b[2], b[3]), (RTL_MAX, b[1], b[2], b[3])
+                kept_rtl.append(kept)
+                hackrf_bands.append(over)
+            else:
+                kept_rtl.append(b)
+        rtlsdr_bands = kept_rtl
+        if not rtlsdr_bands and hackrf_bands:
+            log.warning("SCAN SPLIT: no RTL-SDR-capable bands — HackRF takes all")
+        if not hackrf_bands and rtlsdr_bands:
+            hackrf_bands, rtlsdr_bands = rtlsdr_bands, []
+            log.warning("SCAN SPLIT: no HackRF bands — HackRF takes all")
+        # Coverage check: every input Hz must be covered by some device
+        total_in = sum(b[1] - b[0] for b in bands)
+        total_out = sum(b[1] - b[0] for b in rtlsdr_bands) + sum(b[1] - b[0] for b in hackrf_bands)
+        if total_out < total_in:
+            log.error(f"SCAN COVERAGE LOSS: {total_in - total_out} MHz dropped in split!")
         assignment = {}
         if "hackrf" in devices and hackrf_bands:
             assignment["hackrf"] = hackrf_bands
@@ -2334,6 +2406,7 @@ def main_curses(stdscr, devices):
             threading.Thread(target=_wifi_ble_scan_worker, daemon=True, name="rflord-wifi-ble").start()
 
         all_signals = []
+        sweep_failures = set()  # (f_lo,f_hi) with FAILED sweeps — must not retire bands
         h, w = stdscr.getmaxyx()
         scan_bands = accel.get_active_bands(bands) if accel else bands
 
@@ -2355,7 +2428,10 @@ def main_curses(stdscr, devices):
                         output = rtlsdr_sweep(f_lo, f_hi)
                     else:
                         output = hackrf_sweep(f_lo, f_hi, bw, n)
+                    if not output:
+                        sweep_failures.add((f_lo, f_hi))  # failed != empty band
                     sigs.extend(parse_sweep(output))
+                    results[result_key] = list(sigs)  # publish per band (partial survives timeout)
                     done[0] += 1
                 results[result_key] = sigs
 
@@ -2415,6 +2491,8 @@ def main_curses(stdscr, devices):
                     time.sleep(0.05)
                 if sweep_result[0]:
                     all_signals.extend(parse_sweep(sweep_result[0]))
+                else:
+                    sweep_failures.add((f_lo, f_hi))  # failed != empty band
         
         seen = {}
         unique = []
@@ -2446,14 +2524,22 @@ def main_curses(stdscr, devices):
         sus_count = len([s for s in unique if classify(s["freq"]/1e6, s["peak"], s["std"], s.get("bw", 0)) in ("sus", "danger")])
         log.info(f"Scan #{scan_num}: {len(unique)} signals, {sus_count} suspicious")
 
-        # Scan acceleration recording
+        # Scan acceleration recording — from THIS cycle's actual sweep output
+        # (unique is the 300s cache view and would feed stale emptiness data),
+        # and failed sweeps must not count toward band retirement.
         if accel:
             for f_lo, f_hi, bw, n in bands:
-                band_signals = [s for s in unique if f_lo*1e6 <= s['freq'] <= f_hi*1e6]
-                accel.record_band_result(f_lo, f_hi, len(band_signals))
+                band_signals = [s for s in all_signals if f_lo*1e6 <= s['freq'] <= f_hi*1e6]
+                accel.record_band_result(f_lo, f_hi, len(band_signals),
+                                         sweep_ok=(f_lo, f_hi) not in sweep_failures)
 
-        # History recording
+        # History recording — annotate dicts first (record_scan stores
+        # classification/type which raw scan dicts do not carry)
         if history:
+            for s in unique:
+                _f = s['freq'] / 1e6
+                s.setdefault('classification', classify(_f, s['peak'], s['std'], s.get('bw', 0)))
+                s.setdefault('type', get_signal_type(_f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']))
             history.record_scan(unique, device)
 
         # Web dashboard update — pass grouped data same as curses
@@ -2469,34 +2555,26 @@ def main_curses(stdscr, devices):
                 web_sus = []
                 for g in sus_grouped:
                     f = g['freq']
+                    cls = classify(f, g['peak'], g.get('std', 0), g.get('bw', 0))
+                    # Type and identification come from the SAME chain as the
+                    # terminal table (g['type'] + g['remark']) — never re-run a
+                    # second lookup (it disagreed with the table).
                     spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
-                    cls = classify(f, g['peak'], g.get('std', 0))
-                    # Spy device is deterministic — use as type AND identification
-                    if spy_name:
-                        sig_type = f"{spy_icon} {spy_name}"
-                        identification = g.get('remark', '')
-                    else:
-                        sig_type = g['type']
-                        identification = g.get('remark', '')
                     web_sus.append({
                         'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
-                        'distance': g['dist'], 'type': sig_type,
-                        'identification': identification,
+                        'distance': g['dist'], 'type': g['type'],
+                        'identification': g.get('remark', ''),
                         'count': g['count'], 'category': 'suspicious',
                         'icon': spy_icon or '', 'classify': cls,
                     })
                 web_ok = []
                 for g in ok_grouped:
                     f = g['freq']
+                    cls = classify(f, g['peak'], g.get('std', 0), g.get('bw', 0))
+                    # Same source as terminal table (see web_sus above)
                     spy_name, spy_icon, spy_threat = identify_spy_device(f, g.get('std', 0))
-                    cls = classify(f, g['peak'], g.get('std', 0))
-                    # Spy device is deterministic — use as type AND identification
-                    if spy_name:
-                        sig_type = f"{spy_icon} {spy_name}"
-                        identification = g.get('remark', '')
-                    else:
-                        sig_type = g['type']
-                        identification = g.get('remark', '')
+                    sig_type = g['type']
+                    identification = g.get('remark', '')
                     web_ok.append({
                         'freq': f * 1e6, 'power': g['peak'], 'std': g['std'],
                         'distance': g['dist'], 'type': sig_type,
@@ -2554,19 +2632,27 @@ def main_curses(stdscr, devices):
             f = p['freq'] / 1e6
             if not in_legitimate_band(f):
                 log.warning(f"ACTIVE PROBE: {f:.1f} MHz, peak={p['peak']:.1f} dBFS, noise_floor={noise_floor:.1f}")
-                if round(f) not in known_freqs:
-                    known_freqs[round(f)] = time.time()
+                _fk = round(f)
+                _now = time.time()
+                _last = known_freqs.get(_fk, 0)
+                if (not _last) or (_now - _last > ALERT_REAPPEAR_S):
                     alert_count += 1
+                known_freqs[_fk] = _now
         
         new_suspicious = []
         for s in unique:
             f = s['freq'] / 1e6
             if classify(f, s['peak'], s['std'], s.get('bw', 0)) in ("sus", "danger"):
-                if round(f) not in known_freqs:
-                    known_freqs[round(f)] = time.time()
+                _fk = round(f)
+                _now = time.time()
+                # Re-alert if this freq was ABSENT for ALERT_REAPPEAR_S and came back
+                _last = known_freqs.get(_fk, 0)
+                if (not _last) or (_now - _last > ALERT_REAPPEAR_S):
                     new_suspicious.append(s)
-                    log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f" % (f, s["peak"], s["std"]))
+                    log.warning("SUSPICIOUS: %.1f MHz, peak=%.1f dBFS, std=%.1f%s" % (f, s["peak"], s["std"],
+                                " (reappeared)" if _last else ""))
                     alert_count += 1
+                known_freqs[_fk] = _now  # last-seen timestamp
         
         # Perimeter Secured mode — auto-jam new suspicious signals
         if perimeter.active:
@@ -2806,24 +2892,20 @@ def main_curses(stdscr, devices):
                     prefix = "ALARM!" if is_alarm else "WARNING!"
                     sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     dist_str = f", about {speak_distance(dist)}"
-                    # Military UHF band — skip Artemis (overly broad entries)
-                    if 225 <= f <= 400:
-                        spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                        if spy_name:
-                            announcements.append(f"{prefix} {spy_name} detected at {f:.0f} megahertz{dist_str}")
-                        else:
-                            announcements.append(f"{prefix} {f:.0f} megahertz, {sig_type}{dist_str}")
-                    else:
-                        artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
-                        if artemis_entry:
-                            name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
-                            announcements.append(f"{prefix} {f:.0f} megahertz, identified as {name}{dist_str}")
-                        else:
-                            spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
-                            if spy_name:
-                                announcements.append(f"WARNING! {spy_name} detected at {f:.0f} megahertz{dist_str}")
-                            else:
-                                announcements.append(f"{f:.0f} megahertz, {sig_type}{dist_str}")
+                    # Voice MUST say what the table shows — the sig_type from the
+                    # same priority chain. Artemis (frequency-only lookup) is only
+                    # a secondary clause, never the primary name (they disagreed:
+                    # voice said 'wireless video transmitter' while the table
+                    # showed 'DJI Mavic 3').
+                    spy_name, spy_icon, threat = identify_spy_device(f, s['std'])
+                    name = spy_name if spy_name else sig_type
+                    extra = ""
+                    artemis_entry = identify_signal(f, artemis_db) if artemis_db else None
+                    if artemis_entry and not spy_name:
+                        art_name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
+                        if art_name and art_name.lower() not in name.lower():
+                            extra = f", also catalogued as {art_name}"
+                    announcements.append(f"{prefix} {name} at {f:.0f} megahertz{dist_str}{extra}")
                 
                 # Voice decode + play in background thread (blocks 15+ seconds)
                 def _voice_worker():
@@ -2936,7 +3018,7 @@ def main_curses(stdscr, devices):
             elif key == 'cursor_down':
                 # Get max count for active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
-                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'], x.get('bw', 0))))
                 sus_grp = group_suspicious(sus_list, artemis_db)
                 ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
@@ -2957,7 +3039,7 @@ def main_curses(stdscr, devices):
             elif key == 'details':
                 # Get the selected signal from active panel
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
-                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'], x.get('bw', 0))))
                 sus_grp = group_suspicious(sus_list, artemis_db)
                 ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
@@ -2971,7 +3053,7 @@ def main_curses(stdscr, devices):
             elif key == 'capture':
                 # Capture screenshot from selected signal (camera/FPV)
                 sus_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) in ('sus', 'danger')],
-                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'])))
+                                  key=lambda x: -severity_score(x['freq']/1e6, x['peak'], x['std'], classify(x['freq']/1e6, x['peak'], x['std'], x.get('bw', 0))))
                 sus_grp = group_suspicious(sus_list, artemis_db)
                 ok_list = sorted([s for s in unique if classify(s['freq']/1e6, s['peak'], s['std'], s.get('bw', 0)) not in ('sus', 'danger') and s['peak'] > -65],
                                  key=lambda x: x['peak'], reverse=True)
@@ -3225,10 +3307,13 @@ def main_ansi(devices=None):
         for s in unique:
             f = s['freq'] / 1e6
             if classify(f, s['peak'], s['std'], s.get('bw', 0)) in ("sus", "danger"):
-                if round(f) not in known_freqs:
-                    known_freqs[round(f)] = time.time()
+                _fk = round(f)
+                _now = time.time()
+                _last = known_freqs.get(_fk, 0)
+                if (not _last) or (_now - _last > ALERT_REAPPEAR_S):
                     new_suspicious.append(s)
                     alert_count += 1
+                known_freqs[_fk] = _now
         
         elapsed = int(time.time() - start_time)
         uh, um, us = elapsed // 3600, (elapsed % 3600) // 60, elapsed % 60

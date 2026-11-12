@@ -65,11 +65,20 @@ DEFAULTS = {
 def load_config(path=None):
     if path is None:
         path = os.path.expanduser('~/.config/rflord/config.yaml')
-    config = dict(DEFAULTS)
+    import copy
+    config = copy.deepcopy(DEFAULTS)
     if os.path.exists(path):
         with open(path) as f:
             user = yaml.safe_load(f) or {}
-            config.update(user)
+
+        def _deep_merge(base, overlay):
+            for k, v in overlay.items():
+                if isinstance(v, dict) and isinstance(base.get(k), dict):
+                    _deep_merge(base[k], v)
+                else:
+                    base[k] = v
+            return base
+        _deep_merge(config, user)
     else:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w') as f:
