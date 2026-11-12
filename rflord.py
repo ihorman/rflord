@@ -348,7 +348,7 @@ def group_signals_by_type(signals, artemis_db=None):
     for s in signals:
         f = s['freq'] / 1e6
         # get_signal_type() now has correct priority: satellite > spy_db > rf_protos > heuristic
-        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
         if sig_type not in groups:
             groups[sig_type] = []
         groups[sig_type].append(s)
@@ -381,7 +381,7 @@ def group_suspicious(signals, artemis_db=None):
     groups = {}
     for s in signals:
         f = s['freq'] / 1e6
-        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
         # Use get_signal_type() as group key — it has correct priority chain
         if sig_type not in groups:
             groups[sig_type] = []
@@ -455,6 +455,11 @@ def classify(f, power, std, bw=0):
     Known legitimate signals are ALWAYS ok, regardless of distance.
     Only unknown signals at close range are suspicious.
     """
+    
+    # === Self-radio: uConsole's own WiFi/BT (cm from antenna) ===
+    # Very strong 2.4 GHz signal = the device's OWN radio, not a drone
+    if power > -15 and 2400 <= f <= 2500:
+        return "ok"  # Local radio self-interference
     
     # === DRONE SIGNALS — always danger (military threat) ===
     # Check signal type for drone signatures BEFORE WiFi/broadcast ok
@@ -1407,7 +1412,7 @@ def identify_signal(freq_mhz, artemis_db):
                 best = entry
     return best
 
-def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
+def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None, power=None):
     """Identify signal type using heuristic approach.
     
     Priority:
@@ -1438,6 +1443,10 @@ def get_signal_type(freq_mhz, bw, pmr, std, artemis_db=None):
     spy_name, spy_icon, spy_threat = identify_spy_device(freq_mhz, std)
     if spy_name:
         return f"{spy_icon} {spy_name}"
+    
+    # === Self-radio: uConsole's own WiFi/BT (very strong = cm away) ===
+    if power is not None and power > -15 and 2400 <= freq_mhz <= 2500:
+        return "Local Radio"
     
     # === STEP 2: Drone RF DB for bursty signals (FHSS drones vs WiFi) ===
     # DJI OcuSync/ExpressLRS are bursty (high std), WiFi is continuous (low std)
@@ -2545,7 +2554,7 @@ def main_curses(stdscr, devices):
         
         all_camera_signals = [s for s in unique
                               if is_camera_signal(s['freq']/1e6, s['std'],
-                                                  get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db))]
+                                                  get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']))]
         # Filter by cooldown
         now_ts = time.time()
         camera_signals = []
@@ -2562,7 +2571,7 @@ def main_curses(stdscr, devices):
             def _camera_worker(sig):
                 f = sig['freq'] / 1e6
                 spy_name, spy_icon, threat = identify_spy_device(f, sig['std'])
-                label = spy_name or get_signal_type(f, sig.get('bw', 0), 0, sig['std'], artemis_db)
+                label = spy_name or get_signal_type(f, sig.get('bw', 0), 0, sig['std'], artemis_db, sig['peak'])
                 log.warning(f"HIDDEN CAMERA: {label} at {f:.1f} MHz, peak={sig['peak']:.1f} dBFS — capturing screenshot")
                 # Record spy event to persistent storage
                 if web_dash:
@@ -2590,7 +2599,7 @@ def main_curses(stdscr, devices):
         
         for s in unique:
             f = s['freq'] / 1e6
-            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
             is_crit, reason = is_critical_signal(f, s['peak'], s['std'], sig_type)
             if is_crit:
                 freq_key = round(f)
@@ -2654,7 +2663,7 @@ def main_curses(stdscr, devices):
         if web_dash:
             for s in unique:
                 f = s['freq'] / 1e6
-                sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                 sig_lower = sig_type.lower()
                 # Only record events for actual drone/camera signals
                 is_drone_cam = False
@@ -2688,7 +2697,7 @@ def main_curses(stdscr, devices):
         
         all_voice_signals = [s for s in unique
                              if is_voice_signal(s['freq']/1e6, s['std'],
-                                                get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db))
+                                                get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']))
                              and s['peak'] > VOICE_THRESHOLD]
         # Filter by cooldown
         voice_signals = []
@@ -2703,7 +2712,7 @@ def main_curses(stdscr, devices):
             def _voice_capture_worker(sigs):
                 for s in sigs:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     log.info(f"VOICE SIGNAL: {sig_type} at {f:.1f} MHz, peak={s['peak']:.1f} dBFS — capturing audio")
                     play_voice_sample(f)
             voice_thread = threading.Thread(target=_voice_capture_worker, args=(voice_signals,),
@@ -2733,7 +2742,7 @@ def main_curses(stdscr, devices):
                         log.info(f"Warning skip (silent): {f:.1f} MHz at {dist}")
                         continue
                     prefix = "ALARM!" if is_alarm else "WARNING!"
-                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
@@ -2759,7 +2768,7 @@ def main_curses(stdscr, devices):
                     vr = None
                     for s in above_threshold:
                         f = s['freq'] / 1e6
-                        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                        sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                         # Skip camera signals — handled by camera worker
                         if is_camera_signal(f, s['std'], sig_type):
                             continue
@@ -2770,7 +2779,7 @@ def main_curses(stdscr, devices):
                     if not vr:
                         for s in above_threshold:
                             f = s['freq'] / 1e6
-                            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                            sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                             if is_camera_signal(f, s['std'], sig_type):
                                 continue
                             if sig_type in ("CW/Carrier", "Narrowband", "NFM", "WFM", "AM") and s['std'] < 4:
@@ -3222,7 +3231,7 @@ def main_ansi(devices=None):
                     if not is_alarm and not WARNING_ENABLED:
                         continue
                     prefix = "ALARM!" if is_alarm else "WARNING!"
-                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     dist_str = f", about {speak_distance(dist)}"
                     # Military UHF band — skip Artemis (overly broad entries)
                     if 225 <= f <= 400:
@@ -3249,7 +3258,7 @@ def main_ansi(devices=None):
                         break
                 for s in above_threshold:
                     f = s['freq'] / 1e6
-                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db)
+                    sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     if sig_type in ("CW/Carrier", "Narrowband", "NFM", "WFM", "AM") and s['std'] < 4:
                         play_voice_sample(f)
                         if not voice_result:
