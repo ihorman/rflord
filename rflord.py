@@ -7,6 +7,8 @@ Author: Ihor Kolodyuk
 
 import warnings
 import os
+import re
+import wave
 os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
 
 import subprocess
@@ -1664,11 +1666,14 @@ def save_decoded_audio(freq_mhz, wav_path, sig_type=""):
         ensure_decoded_dir()
         ts = time.strftime("%Y%m%d_%H%M%S")
         freq_label = f"{freq_mhz:.1f}".replace('.', 'p')
-        name = f"{ts}_{freq_label}MHz_{sig_type}.wav"
+        # sanitize: sig_type can contain '/' ('70cm/PMR') which breaks the path
+        safe_type = re.sub(r'[^A-Za-z0-9_.-]', '_', sig_type) or "signal"
+        name = f"{ts}_{freq_label}MHz_{safe_type}.wav"
         dest = os.path.join(DECODED_DIR, "audio", name)
         shutil.copy2(wav_path, dest)
         return dest
-    except:
+    except Exception as e:
+        log.warning(f"save_decoded_audio failed: {e}")
         return None
 
 
@@ -1755,6 +1760,7 @@ def _iq_rms(raw_path):
         if len(data) < 100:
             return 0.0
         iq = (data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)) / 128.0
+        iq = iq - np.mean(iq)  # DC spike is not a real signal level
         return float(np.sqrt(np.mean(np.abs(iq) ** 2)))
     except Exception:
         return 0.0
@@ -1853,12 +1859,18 @@ def play_voice_sample(freq_mhz):
             # REAL analog voice — play and save
             log.info(f"DECODED: {freq_mhz:.1f} MHz ({best_mode}), type={sig_type}, playing audio...")
             save_decoded_audio(freq_mhz, best_wav, sig_type)
+            # Voice must play FULLY — timeout scales with audio length
+            try:
+                with wave.open(best_wav) as _w:
+                    _dur = _w.getnframes() / float(_w.getframerate())
+            except Exception:
+                _dur = 10.0
             with _playback_lock:
                 if IS_MACOS:
-                    r2 = subprocess.run(["afplay", best_wav], capture_output=True, timeout=15)
+                    r2 = subprocess.run(["afplay", best_wav], capture_output=True, timeout=_dur + 15)
                 else:
                     ensure_sink()
-                    r2 = subprocess.run(["paplay", best_wav], capture_output=True, timeout=15)
+                    r2 = subprocess.run(["paplay", best_wav], capture_output=True, timeout=_dur + 15)
             if r2.returncode != 0:
                 log.warning(f"VOICE PLAY FAIL: rc={r2.returncode}")
             else:

@@ -90,14 +90,29 @@ def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
 def fine_tune(iq, fs):
     """Find the strongest carrier in the capture and mix it to baseband.
     AM demod previously lacked this — an AM signal offset from the capture
-    center was destroyed by aliasing when decimated to 48 kHz."""
+    center was destroyed by aliasing when decimated to 48 kHz.
+
+    CRITICAL: HackRF has a large DC offset spike EXACTLY at the tuned
+    frequency. Without removing it, the 'strongest carrier' is always the
+    DC spike and the real signal is filtered out as out-of-channel noise."""
     import numpy as np
+    # Remove DC offset (the center-frequency spike)
+    iq = iq - np.mean(iq)
     n_fft = min(len(iq), 8192)
     spec = np.zeros(n_fft)
     for off in range(0, len(iq) - n_fft, n_fft):
         spec += np.abs(np.fft.fftshift(np.fft.fft(iq[off:off + n_fft]))) ** 2
     freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / fs))
-    peak_idx = int(np.argmax(spec))
+    # ONLY search near the tuned frequency: a nearby repeater at -800 kHz
+    # was stronger than the target radio, so we demodulated the WRONG
+    # channel. The sweep's peak-bin freq is accurate to ~half a bin
+    # (~230 kHz), so a +/-350 kHz window covers the target.
+    window = (freqs >= -350000) & (freqs <= 350000)
+    if np.any(window):
+        w_spec = np.where(window, spec, 0)
+        peak_idx = int(np.argmax(w_spec))
+    else:
+        peak_idx = int(np.argmax(spec))
     f_offset = freqs[peak_idx]
     if abs(f_offset) > 10:  # only mix if actually offset
         t = np.arange(len(iq)) / fs
@@ -224,7 +239,20 @@ def decode_dsd(wav_file, mode='auto'):
     cmd = ["dsdccx", "-i", wav_file, "-o", "/dev/null", "-q"] + args
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
-        return r.stdout + r.stderr
+        # dsdccx prints banner/debug lines ('Digital Speech Decoder DSDcc',
+        # 'DSDDecoder::resetFrameSync...') which must NOT count as decoded text.
+        out_lines = []
+        for line in r.stdout.splitlines():
+            s = line.strip()
+            if not s:
+                continue
+            if '::' in s:                       # C++ debug traces
+                continue
+            if any(m in s for m in ('Digital Speech Decoder', 'DSDcc', 'Opened',
+                                     'reset', 'symbol 0', 'FrameSync')):
+                continue
+            out_lines.append(s)
+        return '\n'.join(out_lines)
     except subprocess.TimeoutExpired:
         return "[DSD timeout]"
     except FileNotFoundError:
