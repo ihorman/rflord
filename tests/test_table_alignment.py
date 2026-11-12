@@ -304,6 +304,8 @@ class TestParseSweep:
         result = parse_sweep(line)
         assert len(result) == 1
         assert result[0]['freq'] == 89000000
+        # bw = cluster above noise floor: only bin 0 exceeds median+3 -> 1 x 2 MHz
+        assert result[0]['bw'] == 2000
 
     def test_parse_empty(self):
         assert parse_sweep("") == []

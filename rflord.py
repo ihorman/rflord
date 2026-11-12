@@ -317,9 +317,13 @@ def parse_sweep(output):
         if bin_width <= 0:
             bin_width = (freq_high - freq_low) / len(db_vals)
 
-        # Find contiguous clusters of bins above (peak - 25 dB): one per signal
+        # Find contiguous clusters of bins above NOISE FLOOR: one per signal.
+        # (peak - 25 alone can be below the noise floor -> whole row becomes
+        # one cluster and every bw reads 5000 kHz)
         peak_db = max(db_vals)
-        thresh = peak_db - 25.0
+        _sorted = sorted(db_vals)
+        median = _sorted[len(_sorted) // 2]
+        thresh = max(peak_db - 25.0, median + 3.0)
         i = 0
         n = len(db_vals)
         while i < n:
@@ -2955,7 +2959,6 @@ def main_curses(stdscr, devices):
                              if is_voice_signal(s['freq']/1e6, s['std'],
                                                 get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']))
                              and s['peak'] > VOICE_THRESHOLD
-                             and s['std'] >= 0.5   # unmodulated carrier (beacon) = std~0
                              and get_signal_type(s['freq']/1e6, s.get('bw', 0), 0, s['std'], artemis_db, s['peak']) not in ("CW/Carrier", "Narrowband")]
         # Top-2 strongest only — capturing EVERY candidate queued minutes of
         # noise and the real radio transmission ended before its turn.
@@ -2997,15 +3000,17 @@ def main_curses(stdscr, devices):
                     f = s['freq'] / 1e6
                     dist = est_distance(f, s['peak'])
                     dist_m = est_distance_m(f, s['peak'])
-                    # Determine alert level based on distance
-                    is_alarm = dist_m < ALARM_THRESHOLD_M
-                    if is_alarm and not ALARM_ENABLED:
-                        log.info(f"Alarm skip (disabled): {f:.1f} MHz at {dist}")
-                        continue
-                    if not is_alarm and not WARNING_ENABLED:
-                        log.info(f"Warning skip (silent): {f:.1f} MHz at {dist}")
-                        continue
-                    prefix = "ALARM!" if is_alarm else "WARNING!"
+                    # REQUIREMENT: a POWERFUL signal closer than 100 m must
+                    # ALWAYS warn — never silently skipped. Distant signals
+                    # follow the WARNING_ENABLED preference.
+                    is_close = dist_m < ALARM_THRESHOLD_M
+                    if is_close:
+                        prefix = "WARNING! Powerful signal less than 100 meters."
+                    else:
+                        if not WARNING_ENABLED:
+                            log.info(f"Warning skip (silent): {f:.1f} MHz at {dist}")
+                            continue
+                        prefix = "WARNING!"
                     sig_type = get_signal_type(f, s.get('bw', 0), 0, s['std'], artemis_db, s['peak'])
                     dist_str = f", about {speak_distance(dist)}"
                     # Voice MUST say what the table shows — the sig_type from the
@@ -3021,7 +3026,10 @@ def main_curses(stdscr, devices):
                         art_name = artemis_entry.get('description', '') or artemis_entry.get('name', '')
                         if art_name and art_name.lower() not in name.lower():
                             extra = f", also catalogued as {art_name}"
-                    announcements.append(f"{prefix} {name} at {f:.0f} megahertz{dist_str}{extra}")
+                    if is_close:
+                        announcements.append(f"{prefix} {name} at {f:.0f} megahertz, {speak_distance(dist)}{extra}")
+                    else:
+                        announcements.append(f"{prefix} {name} at {f:.0f} megahertz{dist_str}{extra}")
                 
                 # Voice decode + play in background thread (blocks 15+ seconds)
                 def _voice_worker():
