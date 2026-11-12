@@ -745,8 +745,8 @@ def speak(text):
     def _speak_thread():
         global _speaking
         try:
-            raw = tempfile.mktemp(suffix='.mp3', prefix='tts_')
-            out = tempfile.mktemp(suffix='.wav', prefix='hal_')
+            raw = tempfile.NamedTemporaryFile(suffix='.mp3', prefix='tts_', delete=False).name
+            out = tempfile.NamedTemporaryFile(suffix='.wav', prefix='hal_', delete=False).name
             # Use edge-tts as module (more reliable than CLI)
             import edge_tts
             import asyncio

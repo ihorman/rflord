@@ -75,7 +75,7 @@ def guess_mode(freq_mhz):
 def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
     """Capture IQ data using HackRF. Min sample rate: 2 MHz."""
     if output is None:
-        output = tempfile.mktemp(suffix='.raw', prefix='voice_')
+        output = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
     freq_hz = int(freq_mhz * 1e6)
     n_samples = int(sample_rate * duration_s * 2)  # I + Q
     cmd = ["hackrf_transfer", "-r", output, "-f", str(freq_hz),
@@ -90,7 +90,7 @@ def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
 def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
     """Convert IQ raw file to demodulated audio WAV."""
     if output is None:
-        output = tempfile.mktemp(suffix='.wav', prefix='voice_demod_')
+        output = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_demod_', delete=False).name
 
     import numpy as np
     data = np.fromfile(raw_file, dtype=np.int8)

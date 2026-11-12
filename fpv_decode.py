@@ -76,7 +76,7 @@ def capture_iq_hackrf(freq_mhz, duration_s, sample_rate=10000000):
     """Capture IQ using HackRF."""
     import subprocess
     num_bytes = int(sample_rate * duration_s * 2)
-    raw_file = '/tmp/fpv_capture.raw'
+    raw_file = tempfile.NamedTemporaryFile(suffix='.raw', prefix='fpv_', delete=False).name
     print("Capturing %ds at %d MHz..." % (duration_s, freq_mhz))
     cmd = ['hackrf_transfer', '-r', raw_file, '-f', str(int(freq_mhz * 1e6)),
            '-s', str(sample_rate), '-n', str(num_bytes), '-l', '32', '-g', '40', '-a', '1']
