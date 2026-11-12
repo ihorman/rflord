@@ -471,6 +471,11 @@ def classify(f, power, std, bw=0):
         if (2400 <= f <= 2500) or (5725 <= f <= 5850):
             return "danger"  # DJI bands with high burstiness
     
+    # === FPV / spy camera — ALWAYS suspicious ===
+    if 5725 <= f <= 5875: return "danger"  # FPV video band
+    if 1080 <= f <= 1300: return "danger"  # 1.2 GHz spy camera
+    if 900 <= f <= 928: return "danger"   # 900 MHz FPV/camera
+    
     # === KNOWN LEGITIMATE SIGNALS — always ok ===
     if 2400 <= f <= 2500: return "ok"  # WiFi/BT
     if 5150 <= f <= 5875: return "ok"  # WiFi 5GHz
