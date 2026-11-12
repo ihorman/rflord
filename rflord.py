@@ -275,6 +275,8 @@ def rtlsdr_sweep(f_lo, f_hi, gain=40, n=1):
 
 def parse_sweep(output):
     signals = []
+    # Group by frequency range to compute temporal std across sweeps
+    freq_groups = {}
     for line in output.strip().split('\n'):
         if not line or not line[0].isdigit():
             continue
@@ -294,12 +296,30 @@ def parse_sweep(output):
                 pass
         if db_vals:
             center = (freq_low + freq_high) / 2
-            signals.append({
+            key = f"{freq_low}_{freq_high}"
+            if key not in freq_groups:
+                freq_groups[key] = []
+            freq_groups[key].append({
                 'freq': center,
                 'peak': max(db_vals),
                 'avg': sum(db_vals) / len(db_vals),
-                'std': math.sqrt(sum((x - sum(db_vals)/len(db_vals))**2 for x in db_vals) / len(db_vals)) if len(db_vals) > 1 else 0,
+                'spectral_std': math.sqrt(sum((x - sum(db_vals)/len(db_vals))**2 for x in db_vals) / len(db_vals)) if len(db_vals) > 1 else 0,
             })
+    
+    # Compute temporal std from multiple sweeps at same frequency
+    for key, sweeps in freq_groups.items():
+        if len(sweeps) >= 2:
+            peaks = [s['peak'] for s in sweeps]
+            mean_peak = sum(peaks) / len(peaks)
+            temporal_std = math.sqrt(sum((p - mean_peak)**2 for p in peaks) / len(peaks))
+            # Use max temporal_std and spectral_std as the combined metric
+            best = max(sweeps, key=lambda x: x['peak'])
+            best['std'] = max(temporal_std, best['spectral_std'])
+            signals.append(best)
+        else:
+            # Single sweep — use spectral std as fallback
+            signals.append(sweeps[0])
+            signals[-1]['std'] = sweeps[0]['spectral_std']
     return signals
 
 def get_band(f):
@@ -428,6 +448,14 @@ def classify(f, power, std):
     Known legitimate signals are ALWAYS ok, regardless of distance.
     Only unknown signals at close range are suspicious.
     """
+    
+    # === DRONE SIGNALS — always danger (military threat) ===
+    # Check signal type for drone signatures BEFORE WiFi/broadcast ok
+    sig_type = get_signal_type(f, 0, 0, std, None).lower()
+    drone_keywords = ['orlan', 'zala', 'lancet', 'eleron', 'supercam', 
+                      'dji', 'mavic', 'ocu', 'fpv', 'expresslrs', 'elrs']
+    if any(kw in sig_type for kw in drone_keywords):
+        return "danger"
     
     # === KNOWN LEGITIMATE SIGNALS — always ok ===
     if 2400 <= f <= 2500: return "ok"  # WiFi/BT

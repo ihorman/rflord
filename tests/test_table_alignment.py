@@ -52,7 +52,13 @@ class TestClassify:
         assert classify(98, -25, 5) == "ok"
 
     def test_wifi_ok(self):
-        assert classify(2437, -20, 6) == "ok"
+        assert classify(2437, -20, 2) == "ok"  # std=2 continuous = WiFi
+
+    def test_drone_bursty_danger(self):
+        assert classify(2437, -25, 8) == "danger"  # std=8 bursty = DJI drone
+
+    def test_ocusync_58_danger(self):
+        assert classify(5800, -30, 6) == "danger"  # 5.8GHz bursty = OcuSync
 
     def test_cellular_ok(self):
         assert classify(950, -15, 4) == "ok"

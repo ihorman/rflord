@@ -103,12 +103,25 @@ def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
         audio = np.diff(phase) * sample_rate / (2 * np.pi)
         # Normalize
         audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
-        # For WFM, apply de-emphasis
+        # Channel filter: low-pass to remove out-of-band noise
+        from scipy import signal as scipy_signal
         if mode == 'wfm':
-            # Simple de-emphasis filter
+            # WFM: audio bandwidth 15 kHz
+            cutoff = 15000
             alpha = 1.0 / (1.0 + sample_rate * 75e-6)
+            # De-emphasis
             for i in range(1, len(audio)):
                 audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
+        else:
+            # NFM: audio bandwidth 3-4 kHz (PMR, ham, etc.)
+            cutoff = 4000
+        # Apply low-pass filter
+        nyq = sample_rate / 2
+        if cutoff < nyq:
+            b, a = scipy_signal.butter(4, cutoff / nyq, 'low')
+            audio = scipy_signal.filtfilt(b, a, audio)
+        # Re-normalize after filtering
+        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
     elif mode in ('am', 'usb', 'lsb'):
         # AM demodulation
         audio = np.abs(iq)

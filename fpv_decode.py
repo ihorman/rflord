@@ -53,10 +53,13 @@ def load_iq_file(path, sample_rate=10000000):
 
     # .iq extension: could be either format. Detect by content.
     if ext == '.iq':
-        # Read first 100 samples as complex64 and check magnitude
+        # Read first 100 samples as complex64 and check if values are valid floats
         probe = np.fromfile(path, dtype=np.complex64, count=100)
-        if len(probe) > 0 and np.nanmax(np.abs(probe)) > 0.01:
-            return np.fromfile(path, dtype=np.complex64)
+        if len(probe) > 0:
+            # Valid complex64: all finite, reasonable magnitudes (0.001 to 10.0)
+            mags = np.abs(probe)
+            if np.all(np.isfinite(mags)) and np.nanmax(mags) > 0.01 and np.nanmax(mags) < 100:
+                return np.fromfile(path, dtype=np.complex64)
 
     # Default: int8 interleaved (HackRF)
     raw = np.fromfile(path, dtype=np.int8)
