@@ -1798,6 +1798,7 @@ def play_voice_sample(freq_mhz):
         _capture_enter()
         chunks = []
         first_rms = None
+        low_streak = 0
         with _hackrf_lock:
             _kill_stale_hackrf()
             for i in range(15):  # 15 x 2s = 30s max
@@ -1825,14 +1826,20 @@ def play_voice_sample(freq_mhz):
                     first_rms = max(rms, 1e-6)
                     chunks.append(chunk)
                     continue
-                # Transmission over? level dropped >12 dB vs the active level
-                if rms < first_rms * 0.25 or rms < 0.002:
+                # Transmission over? need TWO consecutive low chunks — a
+                # pause between words must not truncate the capture.
+                low = (rms < first_rms * 0.25 or rms < 0.002)
+                if low:
+                    low_streak += 1
                     try:
                         os.unlink(chunk)
                     except OSError:
                         pass
-                    log.info(f"VOICE CAPTURE: transmission ended after {len(chunks)*2}s")
-                    break
+                    if low_streak >= 2 and len(chunks) >= 2:
+                        log.info(f"VOICE CAPTURE: transmission ended after {len(chunks)*2}s")
+                        break
+                    continue
+                low_streak = 0
                 chunks.append(chunk)
         if not chunks:
             return  # finally: _capture_exit()
