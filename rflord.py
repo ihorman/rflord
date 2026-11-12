@@ -1644,33 +1644,17 @@ def play_voice_sample(freq_mhz):
         if not os.path.exists(raw) or os.path.getsize(raw) < 1000:
             log.warning(f"VOICE CAPTURE FAIL: raw file missing or too small ({os.path.getsize(raw) if os.path.exists(raw) else 0} bytes)")
             return
-        import numpy as np
-        data = np.fromfile(raw, dtype=np.int8)
-        iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
-        iq /= 128.0
-        os.unlink(raw)
+        # Use the SAME demodulator as voice_decode.py (channel filter + de-emphasis)
+        from voice_decode import iq_to_audio_wav
         if 88 <= freq_mhz <= 108:
-            phase = np.unwrap(np.angle(iq))
-            audio = np.diff(phase) * 2000000 / (2 * np.pi)
-            alpha = 1.0 / (1.0 + 2000000 * 75e-6)
-            for i in range(1, len(audio)):
-                audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
+            mode = 'wfm'
         else:
-            phase = np.unwrap(np.angle(iq))
-            audio = np.diff(phase) * 2000000 / (2 * np.pi)
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.8
-        import wave
-        target_rate = 48000
-        step = 2000000 / target_rate
-        indices = np.arange(0, len(audio), step).astype(int)
-        indices = indices[indices < len(audio)]
-        audio_48k = audio[indices]
-        audio_16 = (audio_48k * 32767).astype(np.int16)
-        with wave.open(wav, 'w') as w:
-            w.setnchannels(1)
-            w.setsampwidth(2)
-            w.setframerate(target_rate)
-            w.writeframes(audio_16.tobytes())
+            mode = 'nfm'
+        wav = iq_to_audio_wav(raw, sample_rate=2000000, mode=mode, output=wav)
+        os.unlink(raw)
+        if not wav or not os.path.exists(wav) or os.path.getsize(wav) < 1000:
+            log.warning(f"VOICE DECODE FAIL: {freq_mhz:.1f} MHz demod produced no audio")
+            return
         sig_type = get_signal_type(freq_mhz, 0, 0, 0, None)
         log.info(f"DECODED: {freq_mhz:.1f} MHz, type={sig_type}, playing audio...")
         save_decoded_audio(freq_mhz, wav, sig_type)

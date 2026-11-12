@@ -87,68 +87,113 @@ def capture_iq(freq_mhz, duration_s=3, sample_rate=2000000, output=None):
     return None
 
 
+def demod_nfm(iq, fs, channel_bw=12500, deviation=2500, audio_rate=48000, de_emphasis_us=300):
+    """Proper NFM demodulator: fine-tune -> channel filter -> FM demod -> de-emphasis -> audio LPF.
+
+    The IQ is fs Hz wide (e.g. 2 MHz) but a PMR/ham channel is only 12.5-25 kHz.
+    Demodulating the full band mixes 80 channels of noise over the voice.
+    We MUST isolate the channel first."""
+    import numpy as np
+    from scipy import signal as scipy_signal
+
+    # 1. Fine-tune: find strongest carrier within the capture and mix to baseband
+    n_fft = min(len(iq), 8192)
+    spec = np.zeros(n_fft)
+    for off in range(0, len(iq) - n_fft, n_fft):
+        spec += np.abs(np.fft.fftshift(np.fft.fft(iq[off:off + n_fft]))) ** 2
+    freqs = np.fft.fftshift(np.fft.fftfreq(n_fft, 1.0 / fs))
+    peak_idx = np.argmax(spec)
+    f_offset = freqs[peak_idx]
+    if abs(f_offset) > 10:  # only mix if actually offset
+        t = np.arange(len(iq)) / fs
+        iq = iq * np.exp(-2j * np.pi * f_offset * t)
+
+    # 2. Channel filter: low-pass IQ to channel bandwidth (12.5 kHz PMR, 25 kHz wide)
+    nyq = fs / 2.0
+    cutoff = min(channel_bw / 2.0, nyq * 0.95)
+    b, a = scipy_signal.butter(5, cutoff / nyq, 'low')
+    iq_f = (scipy_signal.filtfilt(b, a, np.real(iq))
+            + 1j * scipy_signal.filtfilt(b, a, np.imag(iq)))
+
+    # 3. FM demodulation: instantaneous frequency via phase difference
+    phase = np.unwrap(np.angle(iq_f))
+    audio = np.diff(phase) * fs / (2.0 * np.pi)   # Hz deviation
+    audio = audio / max(deviation, 1.0)            # normalize to ~±1
+
+    # 4. De-emphasis (NFM radios: 300 us; WFM broadcast: 75 us)
+    tau = de_emphasis_us * 1e-6
+    alpha = 1.0 / (1.0 + fs * tau)
+    audio = scipy_signal.lfilter([1.0 - alpha], [1.0, -alpha], audio)
+
+    # 5. Proper resampling to audio_rate FIRST (polyphase, no aliasing).
+    #    Audio band-pass must run at audio_rate — a 300-3400 Hz filter at fs=2 MHz
+    #    is numerically unstable (NaN).
+    from math import gcd
+    g = gcd(int(fs), int(audio_rate))
+    audio = scipy_signal.resample_poly(audio, int(audio_rate) // g, int(fs) // g)
+
+    # 6. Audio band-pass 300-3400 Hz (voice band) at audio_rate, SOS for stability
+    lo = 300.0
+    hi = min(3400.0, audio_rate / 2.0 * 0.95)
+    sos = scipy_signal.butter(4, [lo / (audio_rate / 2.0), hi / (audio_rate / 2.0)], 'band', output='sos')
+    audio = scipy_signal.sosfiltfilt(sos, audio)
+
+    # 7. AGC-lite normalize
+    peak = np.max(np.abs(audio))
+    if peak > 0:
+        audio = audio / peak * 0.8
+    return audio
+
+
 def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
-    """Convert IQ raw file to demodulated audio WAV."""
+    """Convert IQ raw file to demodulated audio WAV (hackrf int8 interleaved)."""
     if output is None:
         output = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_demod_', delete=False).name
 
     import numpy as np
     data = np.fromfile(raw_file, dtype=np.int8)
-    iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
-    iq /= 128.0
+    iq = (data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)) / 128.0
+    if len(iq) < 100:
+        return None
 
-    if mode in ('nfm', 'wfm', 'auto'):
-        # FM demodulation
-        phase = np.unwrap(np.angle(iq))
-        audio = np.diff(phase) * sample_rate / (2 * np.pi)
-        # Normalize
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
-        # Channel filter: low-pass to remove out-of-band noise
-        from scipy import signal as scipy_signal
+    if mode in ('nfm', 'wfm', 'auto', 'fm'):
         if mode == 'wfm':
-            # WFM: audio bandwidth 15 kHz
-            cutoff = 15000
-            alpha = 1.0 / (1.0 + sample_rate * 75e-6)
-            # De-emphasis
-            for i in range(1, len(audio)):
-                audio[i] = audio[i] * (1 - alpha) + audio[i-1] * alpha
+            audio = demod_nfm(iq, sample_rate, channel_bw=180000, deviation=75000,
+                              audio_rate=48000, de_emphasis_us=75)
         else:
-            # NFM: audio bandwidth 3-4 kHz (PMR, ham, etc.)
-            cutoff = 4000
-        # Apply low-pass filter
-        nyq = sample_rate / 2
-        if cutoff < nyq:
-            b, a = scipy_signal.butter(4, cutoff / nyq, 'low')
-            audio = scipy_signal.filtfilt(b, a, audio)
-        # Re-normalize after filtering
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
+            audio = demod_nfm(iq, sample_rate, channel_bw=12500, deviation=2500,
+                              audio_rate=48000, de_emphasis_us=300)
     elif mode in ('am', 'usb', 'lsb'):
-        # AM demodulation
-        audio = np.abs(iq)
-        # Remove DC
-        audio = audio - np.mean(audio)
-        # Normalize
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
-    else:
-        # For digital modes, use FM demod as input to DSD
-        phase = np.unwrap(np.angle(iq))
-        audio = np.diff(phase) * sample_rate / (2 * np.pi)
-        audio = audio / (np.max(np.abs(audio)) + 1e-10) * 0.9
-
-    # Resample to 48kHz if needed
-    if sample_rate != 48000:
         from scipy import signal as scipy_signal
-        audio = scipy_signal.resample(audio, int(len(audio) * 48000 / sample_rate))
+        # Channel filter at full rate is unstable when narrow — decimate first
+        from math import gcd
+        g = gcd(int(sample_rate), 48000)
+        audio_rate = 48000
+        # Resample IQ components down to 48 kHz (channel width still preserved)
+        i_rs = scipy_signal.resample_poly(np.real(iq), audio_rate // g, int(sample_rate) // g)
+        q_rs = scipy_signal.resample_poly(np.imag(iq), audio_rate // g, int(sample_rate) // g)
+        # Channel filter at 48 kHz: AM air band 6 kHz wide
+        sos = scipy_signal.butter(4, 3000 / (audio_rate / 2.0), 'low', output='sos')
+        i_f = scipy_signal.sosfiltfilt(sos, i_rs)
+        q_f = scipy_signal.sosfiltfilt(sos, q_rs)
+        audio = np.sqrt(i_f**2 + q_f**2)   # envelope detection
+        audio = audio - np.mean(audio)      # remove DC
+        peak = np.max(np.abs(audio))
+        if peak > 0:
+            audio = audio / peak * 0.8
+    else:
+        # Digital modes: NFM demod as input for DSD
+        audio = demod_nfm(iq, sample_rate, channel_bw=12500, deviation=2500,
+                          audio_rate=48000, de_emphasis_us=300)
 
-    # Write WAV
+    # Write 48 kHz 16-bit mono WAV
     import wave
-    audio_16 = (audio * 32767).astype(np.int16)
+    audio_16 = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
     with wave.open(output, 'w') as w:
         w.setnchannels(1)
         w.setsampwidth(2)
         w.setframerate(48000)
         w.writeframes(audio_16.tobytes())
-
     return output
 
 
