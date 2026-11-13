@@ -235,14 +235,19 @@ def demod_am_sync(iq, fs, audio_rate=48000):
     return audio.astype(np.float32)
 
 
-def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None):
+def iq_to_audio_wav(raw_file, sample_rate=48000, mode='nfm', output=None, data_format='int8'):
     """Convert IQ raw file to demodulated audio WAV (hackrf int8 interleaved)."""
     if output is None:
         output = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_demod_', delete=False).name
 
     import numpy as np
-    data = np.fromfile(raw_file, dtype=np.int8)
-    iq = (data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)) / 128.0
+    if data_format == 'uint8':
+        _raw = np.fromfile(raw_file, dtype=np.uint8).astype(np.float32)
+        _raw = (_raw - 127.5) / 127.5
+    else:
+        _raw = np.fromfile(raw_file, dtype=np.int8).astype(np.float32) / 128.0
+    data = _raw
+    iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
     if len(iq) < 100:
         return None
 
@@ -377,7 +382,12 @@ def decode_signal(freq_mhz, mode='auto', duration_s=3, raw_file=None, sample_rat
 
     # Check signal presence
     import numpy as np
-    data = np.fromfile(raw_file, dtype=np.int8)
+    if data_format == 'uint8':
+        _raw = np.fromfile(raw_file, dtype=np.uint8).astype(np.float32)
+        _raw = (_raw - 127.5) / 127.5
+    else:
+        _raw = np.fromfile(raw_file, dtype=np.int8).astype(np.float32) / 128.0
+    data = _raw
     iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
     iq /= 128.0
     power_db = 20 * np.log10(np.mean(np.abs(iq)) + 1e-10)
@@ -441,7 +451,12 @@ def scan_and_decode(freq_mhz, duration_s=5):
 
     print(f"  Analyzing signal...")
     import numpy as np
-    data = np.fromfile(raw_file, dtype=np.int8)
+    if data_format == 'uint8':
+        _raw = np.fromfile(raw_file, dtype=np.uint8).astype(np.float32)
+        _raw = (_raw - 127.5) / 127.5
+    else:
+        _raw = np.fromfile(raw_file, dtype=np.int8).astype(np.float32) / 128.0
+    data = _raw
     iq = data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)
     iq /= 128.0
     power = 20 * np.log10(np.mean(np.abs(iq)) + 1e-10)

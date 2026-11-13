@@ -1768,14 +1768,36 @@ def _kill_stale_hackrf():
         pass
     time.sleep(0.2)
 
-def _iq_rms(raw_path):
-    """RMS of int8 interleaved IQ file (signal level)."""
+def available_sdr():
+    """Which SDR is connected: 'hackrf', 'rtlsdr', or None. The built-in
+    RTL-SDR is a first-class citizen — rflord must work on EITHER device
+    (RTL cannot transmit, so suppress stays HackRF-only)."""
+    try:
+        r = subprocess.run(["lsusb"], capture_output=True, text=True, timeout=5)
+        out = r.stdout
+    except Exception:
+        return None
+    hackrf = _has_hackrf_in_usb(out)
+    rtlsdr = _has_rtlsdr_in_usb(out)
+    if hackrf:
+        return 'hackrf'
+    if rtlsdr:
+        return 'rtlsdr'
+    return None
+
+
+def _iq_rms(raw_path, fmt='int8'):
+    """RMS of interleaved IQ file (hackrf=int8, rtl_sdr=uint8)."""
     try:
         import numpy as np
-        data = np.fromfile(raw_path, dtype=np.int8)
+        if fmt == 'uint8':
+            data = np.fromfile(raw_path, dtype=np.uint8).astype(np.float32)
+            data = (data - 127.5) / 127.5
+        else:
+            data = np.fromfile(raw_path, dtype=np.int8).astype(np.float32) / 128.0
         if len(data) < 100:
             return 0.0
-        iq = (data[::2].astype(np.float32) + 1j * data[1::2].astype(np.float32)) / 128.0
+        iq = data[::2] + 1j * data[1::2]
         iq = iq - np.mean(iq)  # DC spike is not a real signal level
         return float(np.sqrt(np.mean(np.abs(iq) ** 2)))
     except Exception:
@@ -1799,19 +1821,36 @@ def play_voice_sample(freq_mhz):
         chunks = []
         first_rms = None
         low_streak = 0
+        sdr = available_sdr()
+        if not sdr:
+            log.warning(f"VOICE CAPTURE FAIL: no SDR device for {freq_mhz:.1f} MHz")
+            return
+        iq_fmt = 'int8' if sdr == 'hackrf' else 'uint8'
         with _hackrf_lock:
-            _kill_stale_hackrf()
+            if sdr == 'hackrf':
+                _kill_stale_hackrf()
             for i in range(15):  # 15 x 2s = 30s max
                 chunk = tempfile.NamedTemporaryFile(suffix='.raw', prefix='voice_', delete=False).name
+                if sdr == 'hackrf':
+                    cap_cmd = ["hackrf_transfer", "-r", chunk, "-f", str(freq_hz),
+                               "-s", "2000000", "-n", "4000000"] + rx_gain_args()
+                else:
+                    # rtl_sdr: uint8 IQ, built-in RTL-SDR is a first-class device
+                    gain = 40
+                    try:
+                        gain = int(_cfg.get('scan', {}).get('gain', {}).get('rtl', 40))
+                    except Exception:
+                        pass
+                    cap_cmd = ["rtl_sdr", "-f", str(freq_hz), "-s", "2048000",
+                               "-n", "4096000", "-g", str(gain), chunk]
                 r = None
                 for attempt in range(2):
-                    r = subprocess.run(["hackrf_transfer", "-r", chunk, "-f", str(freq_hz),
-                                    "-s", "2000000", "-n", "4000000"] + rx_gain_args(),
-                                   capture_output=True, timeout=15)
+                    r = subprocess.run(cap_cmd, capture_output=True, timeout=15)
                     if r.returncode == 0:
                         break
                     log.warning(f"VOICE CAPTURE retry {attempt+1}: rc={r.returncode} stderr={r.stderr[:120]}")
-                    _kill_stale_hackrf()
+                    if sdr == 'hackrf':
+                        _kill_stale_hackrf()
                     time.sleep(0.5)
                 if not r or r.returncode != 0 or not os.path.exists(chunk) or os.path.getsize(chunk) < 1000:
                     try:
@@ -1821,7 +1860,7 @@ def play_voice_sample(freq_mhz):
                     if not chunks:
                         log.warning(f"VOICE CAPTURE FAIL: {freq_mhz:.1f} MHz")
                     break
-                rms = _iq_rms(chunk)
+                rms = _iq_rms(chunk, fmt=iq_fmt)
                 if first_rms is None:
                     first_rms = max(rms, 1e-6)
                     chunks.append(chunk)
@@ -1850,7 +1889,7 @@ def play_voice_sample(freq_mhz):
                 with open(c, 'rb') as inp:
                     out.write(inp.read())
                 os.unlink(c)
-        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz got {len(chunks)*2}s of IQ")
+        log.info(f"VOICE CAPTURE: {freq_mhz:.1f} MHz got {len(chunks)*2}s of IQ ({sdr})")
 
         from voice_decode import iq_to_audio_wav, decode_dsd
         # --- ANALOG: auto-select best demod by speech dynamics ---
@@ -1862,7 +1901,7 @@ def play_voice_sample(freq_mhz):
         cand_wavs = []
         for m in modes:
             out_wav = tempfile.NamedTemporaryFile(suffix='.wav', prefix='voice_', delete=False).name
-            w = iq_to_audio_wav(raw, sample_rate=2000000, mode=m, output=out_wav)
+            w = iq_to_audio_wav(raw, sample_rate=2048000 if iq_fmt == 'uint8' else 2000000, mode=m, output=out_wav, data_format=iq_fmt)
             if not w or not os.path.exists(w):
                 continue
             cand_wavs.append(w)
